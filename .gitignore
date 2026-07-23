@@ -1,0 +1,237 @@
+############################################
+# .gitignore（通用工程忽略规则模板）
+# 适用于：C++ / Qt / CMake / Python / 通用
+############################################
+
+############################
+# 1. 操作系统文件
+############################
+.DS_Store
+Thumbs.db
+desktop.ini
+
+############################
+# 2. 日志 & 临时文件
+############################
+*.log
+*.tmp
+*.temp
+*.cache
+*.swp
+*.swo
+*~
+*.orig
+*.rej
+.*.swp
+*.flc
+*.autosave
+*.debug
+
+############################
+# 3. 编译产物（C/C++）
+############################
+*.o
+*.obj
+*.exe
+*.out
+*.a
+*.lib
+*.dll
+*.so
+*.so.*
+*.dylib
+*.ilk
+*.pdb
+*.idb
+*.Debug
+*.Release
+*.res
+*.rc
+*.prl
+
+############################
+# 4. Qt 生成文件（重点）
+############################
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+*.qm
+*.moc
+*_pch.h.cpp
+*_resource.rc
+*.app
+Makefile*
+/.qmake.cache
+/.qmake.stash
+**/.qmlls.ini
+
+############################
+# 5. CMake 生成文件
+############################
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+/build*/
+/*/build/
+build/
+.build/
+
+############################
+# 6. IDE / 编辑器配置
+############################
+# Visual Studio
+*.sln
+*.suo
+*.vcproj
+*.vcxproj
+*.vcxproj.*
+*.ncb
+*.sdf
+*.opensdf
+*.ib_pdb_index
+*.pro.user*
+*.qbs.user*
+CMakeLists.txt.user*
+*vcproj.*.*.user
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Qt Creator
+*.pro.user*
+*.qbs.user*
+
+# CLion / IDEA
+.idea/
+*.iml
+
+# Vim / Emacs
+*.swp
+*~
+.*.swp
+*.flc
+
+############################
+# 7. Python 相关
+############################
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.pyc
+venv/
+.env/
+.venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.tox/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+############################
+# 8. 环境变量 & 密钥（重点保护）
+############################
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.csr
+
+############################
+# 9. 前端 / Node.js
+############################
+node_modules/
+dist/
+out/
+.next/
+.nuxt/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+############################
+# 10. Java / Kotlin
+############################
+*.class
+*.jar
+*.war
+*.ear
+target/
+.gradle/
+
+############################
+# 11. Docker
+############################
+.docker/
+
+############################
+# 12. 其他缓存 & 临时目录
+############################
+.cache/
+.huggingface/
+.moc/
+.obj/
+.pch/
+.rcc/
+.uic/
+.qtcreator/
+.directory
+.reasonix/
+core
+!core/
+tags
+*.qm
+*.orig
+*.rej
+
+############################
+# 13. JSON 配置文件（谨慎忽略）
+############################
+*.json
+*.json.*
+!*.json.example
+!package.json
+!package-lock.json
+
+############################
+# 数据库文件（本地测试数据，禁止上传）
+############################
+*.db
+!*.db.example
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.db-journal
+
+############################
+# 14. 用户个人设定
+############################
+REASONIX.md
+.reasonix/
+
+############################
+# 15. Flutter 相关
+############################
+
+build/
+.dart_tool/
+.pub/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+coverage/
+web/
+windows/
+android/
+.appflowy_patch/
