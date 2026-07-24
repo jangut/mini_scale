@@ -1,0 +1,46 @@
+# -------------------------------
+# 1. Altium Designer 自动生成与缓存目录
+# -------------------------------
+
+# 预览文件夹
+**/__Previews/
+
+# 历史记录文件夹
+**/History/
+
+# 项目日志和输出文件夹（注意名称中的空格需要用反斜杠 \ 转义）
+Project\ Logs*/
+Project\ Outputs*/
+
+# -------------------------------
+# 2. Altium Designer 临时与预览文件
+# -------------------------------
+
+# 预览文件
+*.PcbDocPreview
+*.SchDocPreview
+*.PrjPCBStructure
+
+# 日志与报告文件
+debug.log
+Status\ Report.txt
+*.PcbDoc.htm
+
+# 数据库锁文件（.ldb）
+**/*.ldb
+
+# 通用临时锁文件
+.~lock.*
+
+# -------------------------------
+# 3. 其他通用临时文件
+# -------------------------------
+
+# Windows 系统文件
+Thumbs.db
+desktop.ini
+
+# 文本编辑器临时文件
+*~
+*.swp
+*.swo
