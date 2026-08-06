@@ -236,3 +236,44 @@ windows/
 android/
 .appflowy_patch/
 DOCUMENT/
+
+
+############################
+# 16. 本仓库补充规则
+############################
+
+# SolidWorks / Office 临时锁文件（用户打开文件时自动生成）
+~\$*
+
+# 外部下载的参考项目（不入库）
+platform/Serial-Studio-master/
+platform/SerialUI-main/
+
+
+############################
+# 17. STM32 / 嵌入式固件（software/）
+############################
+**/EWARM/
+**/MDK-ARM/
+**/STM32CubeIDE/
+**/Debug/
+**/Release/
+**/.mxproject
+**/.settings/
+**/.project
+**/.cproject
+*.d
+*.lst
+*.map
+*.elf
+*.hex
+*.bin
+*.axf
+*.uvguix.*
+*.uvoptx
+*.uvprojx
+
+############################
+# 18. PSpice 仿真生成物（hardware/simulink/）
+############################
+**/simulink-PSpiceFiles/
