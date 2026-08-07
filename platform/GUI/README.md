@@ -94,6 +94,22 @@ python main.py
 列：`timestamp`（年月日 时分秒.毫秒）、`weight_g`、`temp_c`（无温度时留空）。
 文件以 UTF-8 BOM 编码保存，Excel 可直接打开。
 
+## 打包成 exe（Windows）
+
+在 `platform/GUI` 目录下：
+
+- 双击 **`build.bat`**（或命令行运行 `.\build.ps1`）
+- 脚本自动安装 PyInstaller、用 `LOGO.png` 生成图标、清理旧产物并打包
+- 产物：**`dist\MiniScale.exe`**（单文件，约 60 MB，拷到任何电脑双击即用，
+  无需安装 Python）
+
+说明：
+- 单文件模式（`--onefile`）会把 Qt 运行库等全部压缩进 exe，体积约减半；
+- 已排除 speech 环境里与上位机无关的大包（torch/sklearn 等），并保留
+  pyqtgraph 运行必需的 QtOpenGL/QtSvg 模块；
+- 首次启动需解压到临时目录，**启动会慢几秒**（后续启动同样要解压）；
+- `dist/`、`build/`、`*.spec`、`logo.ico` 已加入 `.gitignore`，不会污染仓库。
+
 ## 目录结构
 
 ```

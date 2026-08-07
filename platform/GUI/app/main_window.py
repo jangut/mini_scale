@@ -2,6 +2,7 @@
 import csv
 import math
 import random
+import sys
 import threading
 import time
 from collections import deque
@@ -25,7 +26,16 @@ WEIGHT_UNIT = "g"
 TEMP_UNIT = "°C"
 MAX_PLOT_POINTS = 3000      # 折线图保留的最大点数（滚动窗口）
 SIM_INTERVAL_MS = 10        # 模拟数据帧间隔
-APP_ICON_PATH = Path(__file__).resolve().parent.parent / "LOGO.png"
+
+
+def _app_root() -> Path:
+    """源码运行返回项目根；PyInstaller 打包后返回资源解包目录（_internal）。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parent.parent
+
+
+APP_ICON_PATH = _app_root() / "LOGO.png"
 
 # 状态栏里连接状态点的颜色
 COLOR_OK = "#2e9e44"
@@ -327,11 +337,13 @@ class MainWindow(QMainWindow):
             _, rec_value, _ = event
             # 显示/导出时间用当前真实墙钟时刻
             iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            # 记录温度：串口真实温度优先；无串口温度且手动来源时用手动值
-            if temp is not None and not math.isnan(temp):
-                temp_val = temp
-            elif self._temp_source == "manual":
+            # 记录温度严格按所选来源：
+            #   手动 -> 手动设定值；串口 -> 串口温度（有效时）；网络 -> 不记录
+            if self._temp_source == "manual":
                 temp_val = self._manual_temp
+            elif (self._temp_source == "serial"
+                  and temp is not None and not math.isnan(temp)):
+                temp_val = temp
             else:
                 temp_val = None
             self._records.append((iso, rec_value, temp_val))

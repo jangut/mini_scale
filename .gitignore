@@ -278,3 +278,11 @@ platform/SerialUI-main/
 ############################
 **/simulink-PSpiceFiles/
 Drivers
+
+############################
+# 19. PyInstaller 构建产物（platform/GUI/）
+############################
+platform/GUI/dist/
+platform/GUI/build/
+platform/GUI/*.spec
+platform/GUI/logo.ico

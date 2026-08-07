@@ -122,7 +122,7 @@ class SmokeTest(unittest.TestCase):
         self.assertIn("(串口)", win._status_label.text())
 
     def test_manual_temp_source(self):
-        """手动来源：状态栏显示手动值，记录也写入手动温度。"""
+        """手动来源：状态栏显示手动值，记录也写入手动温度（覆盖串口/模拟温度）。"""
         win = self.win
         win._temp_source = "manual"
         win._manual_temp = 26.5
@@ -130,10 +130,18 @@ class SmokeTest(unittest.TestCase):
         win._update_status()
         self.assertIn("26.5", win._status_label.text())
         self.assertIn("(手动)", win._status_label.text())
-        # 手动来源下记录温度写入手动值
-        win._on_data(time.time(), 10.0, float("nan"))
-        if win._records:
-            self.assertEqual(win._records[-1][2], 26.5)
+        # 触发一次记录：喂数据时模拟/串口温度给 25.5，
+        # 手动来源下记录温度必须写入手动值 26.5
+        win._threshold_spin.setValue(1.0)
+        win._stable_spin.setValue(0.5)
+        win._on_data(time.time(), 10.0, 25.5)   # 基线
+        time.sleep(0.01)
+        for _ in range(80):                      # 阶跃到 20 并稳定
+            win._on_data(time.time(), 20.0, 25.5)
+            time.sleep(0.01)
+        self.assertGreaterEqual(len(win._records), 1, "应触发一次记录")
+        self.assertEqual(win._records[-1][2], 26.5,
+                         "手动来源下记录温度应为手动值")
 
     def test_temp_source_dialog(self):
         """温度来源对话框：构造与取值。"""

@@ -1,14 +1,16 @@
 /**
  ******************************************************************************
  * @file    scale.c
- * @brief   称重模块实现：软件 SPI(CPOL=0/CPHA=1) 驱动 ADS1220，
- *          单次转换 20SPS + 滑动平均滤波，提供去皮/标定/重量/温度接口。
+ * @brief   称重模块实现：软件 SPI(CPOL=0/CPHA=1) 驱动 ADS1220 单次转换，
+ *          非阻塞采样（DRDY 就绪才读）+ 去极值滑动平均滤波，
+ *          去皮/标定参数存内部 Flash（掉电保存）。
  ******************************************************************************
  */
 #include "scale.h"
 #include "ADS1220.h"
 
 #include "main.h"          /* HAL + SystemCoreClock */
+#include <string.h>
 #include <stdbool.h>
 
 extern ADC_HandleTypeDef hadc1;   /* 温度通道（main.c 中定义） */
@@ -28,21 +30,109 @@ extern ADC_HandleTypeDef hadc1;   /* 温度通道（main.c 中定义） */
 #define MOSI_PIN    GPIO_PIN_7
 
 /* ------------------------------------------------------------------ */
+/* 参数区：内部 Flash 最后一页（F103C8 64KB，页 63: 0x0800FC00）        */
+/* ------------------------------------------------------------------ */
+#define FLASH_PARAM_ADDR   0x0800FC00u
+#define PARAM_MAGIC        0xA5A5A5A5u
+
+typedef struct
+{
+  uint32_t magic;       /* 有效性标记 */
+  int32_t  zero_offset; /* 去皮零点（原始码） */
+  uint32_t k_bits;      /* K 值（float 位模式），单位 g/lsb */
+  uint32_t crc;         /* magic ^ zero ^ k 校验 */
+} scale_param_t;
+
+/* ------------------------------------------------------------------ */
 /* 采样/滤波参数                                                       */
 /* ------------------------------------------------------------------ */
-#define SAMPLE_FILTER_N    16          /* 滑动平均窗口（20SPS 下约 0.8 s） */
-#define DRDY_TIMEOUT_US    200000u     /* 等待 DRDY 超时（µs） */
+#define FILTER_WIN  8               /* 滤波窗口（20SPS 下约 0.4 s） */
 
 /* ------------------------------------------------------------------ */
 /* 状态                                                               */
 /* ------------------------------------------------------------------ */
-static ADS1220_Handler_t  s_adc = {0};
-static int32_t  s_filter_buf[SAMPLE_FILTER_N];
-static uint8_t  s_filter_idx = 0;
-static uint8_t  s_filter_cnt = 0;
+static ADS1220_Handler_t s_adc = {0};
+static int32_t  s_raw_buf[FILTER_WIN];
+static uint8_t  s_raw_cnt = 0;
 static int32_t  s_filtered_raw = 0;
 static int32_t  s_tare_offset = 0;
 static float    s_scale_g_per_lsb = SCALE_G_PER_LSB;
+
+static scale_param_t s_param;
+
+/* ------------------------------------------------------------------ */
+/* ADS1220 配置：单次转换 20SPS + 50Hz 工频抑制，差分 AIN1-AIN0         */
+/* ------------------------------------------------------------------ */
+static ADS1220_Parameters_t s_params =
+{
+  .InputMuxConfig  = P1N0,          /* AINP=AIN1(INA826 输出), AINN=AIN0(2.5V) */
+  .GainConfig      = _1_,
+  .PGAdisable      = false,
+  .DataRate        = _20_SPS_,
+  .OperatingMode   = NormalMode,
+  .ConversionMode  = false,         /* 单次转换：每轮 START 一次 */
+  .TempeSensorMode = false,
+  .BurnOutCurrentSrc = false,
+  .VoltageRef      = ExternalREF0,  /* REFP0/REFN0 = 2.5V/GND */
+  .FIRFilter       = Rej50Hz,
+  .LowSidePwr      = false,
+  .IDACcurrent     = Off,
+  .IDAC1routing    = Disabled,
+  .IDAC2routing    = Disabled,
+  .DRDYMode        = false,
+};
+
+/* ------------------------------------------------------------------ */
+/* Flash 参数读写                                                      */
+/* ------------------------------------------------------------------ */
+static uint32_t param_crc(const scale_param_t *p)
+{
+  return p->magic ^ (uint32_t)p->zero_offset ^ p->k_bits;
+}
+
+static void param_load(void)
+{
+  const uint32_t *p = (const uint32_t *)FLASH_PARAM_ADDR;
+  union { float f; uint32_t u; } k;
+
+  s_param.magic      = p[0];
+  s_param.zero_offset = (int32_t)p[1];
+  s_param.k_bits     = p[2];
+  s_param.crc        = p[3];
+
+  if ((s_param.magic != PARAM_MAGIC) || (s_param.crc != param_crc(&s_param)))
+  {
+    /* 无有效参数（首次上电/被擦除）：用默认值 */
+    s_param.magic = PARAM_MAGIC;
+    s_param.zero_offset = 0;
+    k.f = SCALE_G_PER_LSB;
+    s_param.k_bits = k.u;
+    s_param.crc = param_crc(&s_param);
+  }
+
+  s_tare_offset = s_param.zero_offset;
+  k.u = s_param.k_bits;
+  s_scale_g_per_lsb = k.f;
+}
+
+static void param_save(void)
+{
+  FLASH_EraseInitTypeDef er;
+  uint32_t err = 0;
+
+  s_param.crc = param_crc(&s_param);
+
+  HAL_FLASH_Unlock();
+  er.TypeErase = FLASH_TYPEERASE_PAGES;
+  er.PageAddress = FLASH_PARAM_ADDR;
+  er.NbPages = 1;
+  HAL_FLASHEx_Erase(&er, &err);
+  HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_PARAM_ADDR +  0u, s_param.magic);
+  HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_PARAM_ADDR +  4u, (uint32_t)s_param.zero_offset);
+  HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_PARAM_ADDR +  8u, s_param.k_bits);
+  HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_PARAM_ADDR + 12u, s_param.crc);
+  HAL_FLASH_Lock();
+}
 
 /* ------------------------------------------------------------------ */
 /* 微秒延时（DWT 周期计数，72MHz 精确）                                */
@@ -103,53 +193,63 @@ static void adc_delay_us(uint32_t us)
 }
 
 /* ------------------------------------------------------------------ */
-/* ADS1220 配置                                                        */
-/* 输入：AINP=AIN1(INA826 输出), AINN=AIN0(2.5V 基准) → 直接测电桥放大差
- * 基准：外部 REFP0/REFN0 = 2.5V/GND（REF5025）
- * 速率：Normal 20SPS + 50Hz 工频 FIR 抑制（中国电网）
- * 模式：单次转换（主循环轮询 DRDY）                                   */
+/* 滤波：去极值滑动平均（窗口 8，去掉最大/最小后平均）                  */
 /* ------------------------------------------------------------------ */
-static ADS1220_Parameters_t s_params =
+static int32_t filter_push(int32_t in)
 {
-  .InputMuxConfig  = P1N0,          /* AINP=AIN1, AINN=AIN0 */
-  .GainConfig      = _1_,
-  .PGAdisable      = false,         /* PGA 使能，允许差分满量程 ±VREF */
-  .DataRate        = _20_SPS_,
-  .OperatingMode   = NormalMode,
-  .ConversionMode  = false,         /* 单次转换 */
-  .TempeSensorMode = false,
-  .BurnOutCurrentSrc = false,
-  .VoltageRef      = ExternalREF0,  /* REFP0/REFN0 = 2.5V/GND */
-  .FIRFilter       = Rej50Hz,       /* 仅 20SPS 有效 */
-  .LowSidePwr      = false,
-  .IDACcurrent     = Off,
-  .IDAC1routing    = Disabled,
-  .IDAC2routing    = Disabled,
-  .DRDYMode        = false,
-};
+  uint8_t i, j;
+  int32_t tmp[FILTER_WIN];
+  int32_t sum;
 
-/* ------------------------------------------------------------------ */
-/* 内部函数                                                           */
-/* ------------------------------------------------------------------ */
-
-/** 启动一次单次转换并等待 DRDY 拉低，读出 24bit 数据。超时返回 0。 */
-static uint8_t sample_once(int32_t *out)
-{
-  uint32_t t0;
-  uint32_t timeout_ticks;
-
-  ADS1220_StartSync(&s_adc);
-  t0 = DWT->CYCCNT;
-  timeout_ticks = DRDY_TIMEOUT_US * (SystemCoreClock / 1000000u);
-  while (HAL_GPIO_ReadPin(DRDY_PORT, DRDY_PIN) != GPIO_PIN_RESET)
+  if (s_raw_cnt < FILTER_WIN)
   {
-    if ((DWT->CYCCNT - t0) > timeout_ticks)
-    {
-      return 0;                     /* 超时：ADC 未响应 */
-    }
+    s_raw_buf[s_raw_cnt++] = in;
   }
-  ADS1220_ReadData(&s_adc, out);
-  return 1;
+  else
+  {
+    for (i = 1; i < FILTER_WIN; i++)
+    {
+      s_raw_buf[i - 1] = s_raw_buf[i];
+    }
+    s_raw_buf[FILTER_WIN - 1] = in;
+  }
+
+  if (s_raw_cnt >= FILTER_WIN)
+  {
+    /* 冒泡排序（8 元素，20Hz 下开销可忽略） */
+    for (i = 0; i < FILTER_WIN; i++)
+    {
+      tmp[i] = s_raw_buf[i];
+    }
+    for (i = 0; i < FILTER_WIN - 1; i++)
+    {
+      for (j = 0; j < FILTER_WIN - 1 - i; j++)
+      {
+        if (tmp[j] > tmp[j + 1])
+        {
+          int32_t t = tmp[j];
+          tmp[j] = tmp[j + 1];
+          tmp[j + 1] = t;
+        }
+      }
+    }
+    sum = 0;
+    for (i = 1; i < FILTER_WIN - 1; i++)   /* 去掉最大最小 */
+    {
+      sum += tmp[i];
+    }
+    s_filtered_raw = sum / (int32_t)(FILTER_WIN - 2);
+  }
+  else
+  {
+    sum = 0;
+    for (i = 0; i < s_raw_cnt; i++)
+    {
+      sum += s_raw_buf[i];
+    }
+    s_filtered_raw = sum / (int32_t)s_raw_cnt;
+  }
+  return s_filtered_raw;
 }
 
 /* ------------------------------------------------------------------ */
@@ -163,7 +263,7 @@ void scale_init(void)
   /* CS 默认拉高（未选中） */
   HAL_GPIO_WritePin(CS_PORT, CS_PIN, GPIO_PIN_SET);
 
-  /* 使能 DWT 周期计数器（µs 延时/超时用） */
+  /* 使能 DWT 周期计数器（µs 延时用） */
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
@@ -175,46 +275,71 @@ void scale_init(void)
   s_adc.ADC_Receive    = adc_receive;
   s_adc.ADC_Delay_US   = adc_delay_us;
 
-  for (i = 0; i < SAMPLE_FILTER_N; i++)
+  for (i = 0; i < FILTER_WIN; i++)
   {
-    s_filter_buf[i] = 0;
+    s_raw_buf[i] = 0;
   }
+  s_raw_cnt = 0;
+
+  /* 读 Flash 标定参数 */
+  param_load();
 
   ADS1220_Init(&s_adc, &s_params);
 
-  /* 预热一次，保证后续 DRDY 时序稳定（首次上电首帧可能无效） */
-  (void)sample_once(&s_filtered_raw);
+  /* 启动首次转换 */
+  ADS1220_StartSync(&s_adc);
 }
 
 uint8_t scale_update(void)
 {
   int32_t raw;
-  int32_t sum = 0;
-  uint8_t i;
 
-  if (!sample_once(&raw))
+  /* 数据未就绪则直接返回（非阻塞） */
+  if (HAL_GPIO_ReadPin(DRDY_PORT, DRDY_PIN) != GPIO_PIN_RESET)
   {
     return 0;
   }
 
-  s_filter_buf[s_filter_idx] = raw;
-  s_filter_idx = (uint8_t)((s_filter_idx + 1u) % SAMPLE_FILTER_N);
-  if (s_filter_cnt < SAMPLE_FILTER_N)
-  {
-    s_filter_cnt++;
-  }
-
-  for (i = 0; i < s_filter_cnt; i++)
-  {
-    sum += s_filter_buf[i];
-  }
-  s_filtered_raw = sum / (int32_t)s_filter_cnt;
+  ADS1220_ReadData(&s_adc, &raw);
+  filter_push(raw);
   return 1;
+}
+
+void scale_start(void)
+{
+  ADS1220_StartSync(&s_adc);
 }
 
 void scale_tare(void)
 {
   s_tare_offset = s_filtered_raw;
+  s_param.zero_offset = s_tare_offset;
+  param_save();
+}
+
+void scale_calibrate(float weight_g)
+{
+  union { float f; uint32_t u; } k;
+  int32_t net = s_filtered_raw - s_tare_offset;
+
+  if (net == 0)
+  {
+    return;                    /* 无有效信号，忽略 */
+  }
+  s_scale_g_per_lsb = weight_g / (float)net;
+  if ((s_scale_g_per_lsb <= 0.0f) || (s_scale_g_per_lsb > 1000.0f))
+  {
+    return;                    /* 合理性检查 */
+  }
+
+  k.f = s_scale_g_per_lsb;
+  s_param.k_bits = k.u;
+  param_save();
+}
+
+void scale_power_down(void)
+{
+  ADS1220_PowerDown(&s_adc);
 }
 
 int32_t scale_raw_net(void)

@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "scale.h"
 #include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,7 +47,9 @@ ADC_HandleTypeDef hadc1;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-UART_HandleTypeDef huart1;
+TIM_HandleTypeDef htim3;
+volatile uint8_t g_sample_flag = 0;   /* TIM3 采样节拍置 1 */
+volatile uint8_t g_wakeup_flag = 0;   /* EXTI4 唤醒置 1 */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -60,27 +63,6 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-/**
- * @brief  USART1 初始化：115200-8N1（上位机协议固定）。
- * @note   PA9/PA10 的 GPIO 已在 MX_GPIO_Init 中配置。
- */
-static void uart1_init(void)
-{
-  __HAL_RCC_USART1_CLK_ENABLE();
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
 
 /**
  * @brief  发送一帧称重数据，格式："<weight_g>,<temp_c>\r\n"（与 GUI 约定）。
@@ -145,6 +127,163 @@ static uint8_t key_stable_pressed(GPIO_TypeDef *port, uint16_t pin)
   return 0;
 }
 
+/**
+ * @brief  发送字符串（串口命令应答用）
+ */
+static void uart_send_str(const char *s)
+{
+  HAL_UART_Transmit(&huart1, (uint8_t *)s, (uint16_t)strlen(s), 100u);
+}
+
+/**
+ * @brief  TIM3 采样节拍初始化：50ms 更新中断（72MHz：PSC=3600-1, ARR=1000-1）
+ */
+static void tim3_init(void)
+{
+  __HAL_RCC_TIM3_CLK_ENABLE();
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 3600u - 1u;      /* 72MHz/3600 = 20kHz */
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 1000u - 1u;         /* 20kHz/1000 = 20Hz = 50ms */
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  HAL_NVIC_SetPriority(TIM3_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(TIM3_IRQn);
+  if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+ * @brief  TIM3 更新中断回调：置采样标志
+ */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance == TIM3)
+  {
+    g_sample_flag = 1;
+  }
+}
+
+/**
+ * @brief  EXTI 中断回调：KEY1(PB4) 唤醒标志
+ */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_4)
+  {
+    g_wakeup_flag = 1;
+  }
+}
+
+/**
+ * @brief  进入 STOP 休眠；KEY1(PB4/EXTI4) 唤醒后重新初始化系统
+ */
+static void system_enter_stop(void)
+{
+  GPIO_InitTypeDef exti_cfg = {0};
+
+  /* 停采样节拍，ADS1220 下电 */
+  HAL_TIM_Base_Stop_IT(&htim3);
+  scale_power_down();
+
+  /* SysTick 暂停，进入 STOP（WFI 等 EXTI4 唤醒） */
+  HAL_SuspendTick();
+  HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
+
+  /* ===== 被 KEY1 唤醒，从此继续执行 ===== */
+  HAL_ResumeTick();
+
+  /* STOP 模式丢失时钟树，全部重新初始化 */
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_ADC1_Init();
+  MX_USART1_UART_Init();
+  scale_init();
+
+  /* MX_GPIO_Init 会重置 PB4，重新配 EXTI4 唤醒源 */
+  exti_cfg.Pin = GPIO_PIN_4;
+  exti_cfg.Mode = GPIO_MODE_IT_RISING;
+  exti_cfg.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &exti_cfg);
+  HAL_NVIC_SetPriority(EXTI4_IRQn, 6, 0);
+  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
+
+  tim3_init();
+
+  /* 等按键松开，避免唤醒瞬间又按着再次触发休眠 */
+  HAL_Delay(300);
+}
+
+/**
+ * @brief  串口命令解析（行格式，与上位机数据流互不干扰）：
+ *         TARE            去皮并保存 Flash
+ *         CAL <重量g>     标定 K 值并保存 Flash（放已知砝码后发送）
+ *         SLEEP           进入休眠
+ */
+static void uart_cmd_exec(char *cmd)
+{
+  if (strncmp(cmd, "TARE", 4) == 0)
+  {
+    scale_tare();
+    uart_send_str("OK TARE\r\n");
+  }
+  else if (strncmp(cmd, "CAL", 3) == 0)
+  {
+    float w;
+    if (sscanf(cmd + 3, "%f", &w) == 1)
+    {
+      scale_calibrate(w);
+      uart_send_str("OK CAL\r\n");
+    }
+    else
+    {
+      uart_send_str("ERR CAL\r\n");
+    }
+  }
+  else if (strncmp(cmd, "SLEEP", 5) == 0)
+  {
+    uart_send_str("OK SLEEP\r\n");
+    system_enter_stop();
+  }
+  else
+  {
+    uart_send_str("ERR\r\n");
+  }
+}
+
+/**
+ * @brief  轮询串口接收并解析命令（非阻塞）
+ */
+static void uart_cmd_poll(void)
+{
+  static char line[32];
+  static uint8_t n = 0;
+  uint8_t c;
+
+  while (HAL_UART_Receive(&huart1, &c, 1, 0) == HAL_OK)
+  {
+    if ((c == '\r') || (c == '\n'))
+    {
+      if (n > 0)
+      {
+        line[n] = '\0';
+        uart_cmd_exec(line);
+        n = 0;
+      }
+    }
+    else if (n < (sizeof(line) - 1))
+    {
+      line[n++] = (char)c;
+    }
+  }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -179,8 +318,19 @@ int main(void)
   MX_ADC1_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  uart1_init();
+  GPIO_InitTypeDef exti_cfg = {0};
+
   scale_init();
+
+  /* KEY1(PB4) 配 EXTI4 上升沿：平时读电平做按键，休眠时作唤醒源 */
+  exti_cfg.Pin = GPIO_PIN_4;
+  exti_cfg.Mode = GPIO_MODE_IT_RISING;
+  exti_cfg.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &exti_cfg);
+  HAL_NVIC_SetPriority(EXTI4_IRQn, 6, 0);
+  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
+
+  tim3_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -190,21 +340,33 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (scale_update())
+    /* TIM3 采样节拍（50ms）驱动，主循环非阻塞 */
+    if (g_sample_flag)
     {
-      /* KEY2(PB5) = 去皮：当前读数置零 */
-      if (key_stable_pressed(GPIOB, GPIO_PIN_5))
+      g_sample_flag = 0;
+      if (scale_update())
       {
-        scale_tare();
-      }
-      /* KEY1(PB4) = 预留（校准等） */
-      if (key_stable_pressed(GPIOB, GPIO_PIN_4))
-      {
-        /* TODO: 标定流程 */
-      }
+        /* KEY2(PB5) = 去皮：当前读数置零并存 Flash */
+        if (key_stable_pressed(GPIOB, GPIO_PIN_5))
+        {
+          scale_tare();
+        }
 
-      /* 每 50ms（ADS1220 20SPS）发送一帧 */
-      uart_send_frame(scale_weight_centi(), scale_temp_centi());
+        /* 串口命令（TARE / CAL <g> / SLEEP） */
+        uart_cmd_poll();
+
+        /* 发送一帧 weight,temp */
+        uart_send_frame(scale_weight_centi(), scale_temp_centi());
+
+        /* 启动下一轮转换 */
+        scale_start();
+      }
+    }
+
+    /* KEY1(PB4) = 电源键：按下进入休眠（休眠中再按唤醒） */
+    if (key_stable_pressed(GPIOB, GPIO_PIN_4))
+    {
+      system_enter_stop();
     }
   }
   /* USER CODE END 3 */
@@ -371,8 +533,8 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : PB2 */
   GPIO_InitStruct.Pin = GPIO_PIN_2;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PB4 PB5 */
@@ -386,12 +548,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configures the port and pin on which the EVENTOUT Cortex signal will be connected */
-  HAL_GPIOEx_ConfigEventout(AFIO_EVENTOUT_PORT_B, AFIO_EVENTOUT_PIN_2);
-
-  /*Enables the Event Output */
-  HAL_GPIOEx_EnableEventout();
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
