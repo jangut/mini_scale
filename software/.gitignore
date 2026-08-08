@@ -1,0 +1,24 @@
+# ============================================================
+# software/ 补充忽略规则
+# 父目录 .gitignore 忽略了整个 MDK-ARM/（含 *.uvprojx），
+# 这里重新放开 Keil 工程必需的两个文件：
+#   - MDK-ARM/software.uvprojx   （Keil 工程定义）
+#   - MDK-ARM/startup_stm32f103xb.s（启动文件）
+# 其余 Keil 中间/用户文件继续忽略。
+# ============================================================
+!MDK-ARM/
+!MDK-ARM/software.uvprojx
+!MDK-ARM/startup_stm32f103xb.s
+
+MDK-ARM/RTE/
+MDK-ARM/DebugConfig/
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvoptx
+
+# 常见编译产物（双保险）
+*.o
+*.axf
+*.hex
+*.bin
+*.lst
+*.map
