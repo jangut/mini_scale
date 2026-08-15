@@ -4,7 +4,11 @@
 #ifndef JDY_SLAVE_H
 #define JDY_SLAVE_H
 
-enum commands {VERSION, RESET, DISCONNECT, MAC_REPORT, PIN_REPORT, PIN_CHANGE, BAUD_REPORT, BAUD_CHANGE, NAME_REPORT, NAME_CHANGE, DEFAULT_SETTING};
+#include <stdint.h>
+
+/* NOTE: enum members are prefixed with CMD_ to avoid collisions with
+   CMSIS/HAL definitions (e.g. RESET exists in stm32f1xx.h) */
+enum commands {CMD_VERSION, CMD_RESET, CMD_DISCONNECT, CMD_MAC_REPORT, CMD_PIN_REPORT, CMD_PIN_CHANGE, CMD_BAUD_REPORT, CMD_BAUD_CHANGE, CMD_NAME_REPORT, CMD_NAME_CHANGE, CMD_DEFAULT_SETTING};
 
 /*IMPORTANT: the first predefined task KEY, all other keys are incremental values starting from TASK_COMMAND_STARTER. master must send these keys which correspond to different tasks*/
 #define TASK_COMMAND_STARTER                0X10        
@@ -36,7 +40,7 @@ void bluetooth_slave_init();
 void bluetooth_command (uint8_t command);
 void bluetooth_buffer_flush();
 void bluetooth_receive_string (uint8_t *input_string, uint8_t string_length);
-void bluetooth_send_string (uint8_t *output_string, uint8_t string_length);
+void bluetooth_send_string (const uint8_t *output_string, uint8_t string_length);
 void bluetooth_tasks_handler();
 
 void bluetooth_uart_set (uint32_t baud_rate);

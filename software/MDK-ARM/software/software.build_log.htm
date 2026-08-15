@@ -28,189 +28,42 @@ Project File Date:  08/15/2026
 *** Using Compiler 'V6.24', folder: 'C:\Users\21592\AppData\Local\Keil_v5\ARM\ARMCLANG\Bin'
 Rebuild target 'software'
 assembling startup_stm32f103xb.s...
-compiling main.c...
-compiling stm32f1xx_hal.c...
 compiling adc.c...
-compiling stm32f1xx_hal_exti.c...
-compiling stm32f1xx_it.c...
-compiling stm32f1xx_hal_msp.c...
-compiling stm32f1xx_hal_dma.c...
-compiling stm32f1xx_hal_rcc.c...
-compiling stm32f1xx_hal_flash_ex.c...
-compiling stm32f1xx_hal_rcc_ex.c...
-../Device/Src/ds18b20.c(1): warning: In file included from...
-../Device/Inc\ds18b20.h(3): error: 'sys.h' file not found
-    3 | #include "sys.h"   
-      |          ^~~~~~~
-1 error generated.
-compiling ds18b20.c...
+compiling main.c...
 compiling gpio.c...
-compiling usart.c...
 compiling stm32f1xx_hal_cortex.c...
-compiling stm32f1xx_hal_gpio_ex.c...
-compiling stm32f1xx_hal_pwr.c...
-compiling system_stm32f1xx.c...
+compiling stm32f1xx_it.c...
+compiling stm32f1xx_hal_exti.c...
 compiling stm32f1xx_hal_flash.c...
-compiling tim.c...
-../Device/Src/jdy_slave.c(4): warning: In file included from...
-../Device/Inc\jdy_slave.h(36): error: unknown type name 'uint8_t'
-   36 | void bluetooth_command (uint8_t command);
-      |                         ^
-../Device/Inc\jdy_slave.h(38): error: unknown type name 'uint8_t'
-   38 | void bluetooth_receive_string (uint8_t *input_string, uint8_t string_length);
-      |                                ^
-../Device/Inc\jdy_slave.h(38): error: unknown type name 'uint8_t'
-   38 | void bluetooth_receive_string (uint8_t *input_string, uint8_t string_length);
-      |                                                       ^
-../Device/Inc\jdy_slave.h(39): error: unknown type name 'uint8_t'
-   39 | void bluetooth_send_string (uint8_t *output_string, uint8_t string_length);
-      |                             ^
-../Device/Inc\jdy_slave.h(39): error: unknown type name 'uint8_t'
-   39 | void bluetooth_send_string (uint8_t *output_string, uint8_t string_length);
-      |                                                     ^
-../Device/Inc\jdy_slave.h(42): error: unknown type name 'uint32_t'
-   42 | void bluetooth_uart_set (uint32_t baud_rate);
-      |                          ^
-../Device/Inc\jdy_slave.h(43): error: unknown type name 'uint8_t'
-   43 | uint8_t bluetooth_buffer_status ();
-      | ^
-../Device/Inc\jdy_slave.h(44): error: unknown type name 'uint8_t'
-   44 | void bluetooth_buffer_read (uint8_t *input_string, uint8_t string_length);
-      |                             ^
-../Device/Inc\jdy_slave.h(44): error: unknown type name 'uint8_t'
-   44 | void bluetooth_buffer_read (uint8_t *input_string, uint8_t string_length);
-      |                                                    ^
-../Device/Inc\jdy_slave.h(45): error: unknown type name 'uint8_t'
-   45 | void bluetooth_send_byte (uint8_t input_byte);
-      |                           ^
-../Device/Inc\jdy_slave.h(46): error: unknown type name 'uint32_t'
-   46 | void delay_function (uint32_t delay_ms);
-      |                      ^
-../Device/Inc\jdy_slave.h(48): error: unknown type name 'uint8_t'
-   48 | void task_switcher(uint8_t index);
-      |                    ^
-../Device/Src/jdy_slave.c(6): error: unknown type name 'uint8_t'
-    6 | uint8_t temporary_string[MAX_LENGTH_OF_STRING];       /*character array container for receiving strings*/
-      | ^
-../Device/Src/jdy_slave.c(7): error: unknown type name 'uint16_t'
-    7 | static uint16_t current_pin;        /*current PIN code for bluetooth module*/
-      |        ^
-../Device/Src/jdy_slave.c(8): error: unknown type name 'uint32_t'
-    8 | static const uint32_t baud_rates[NUMBER_OF_BAUD_RATES] = {9600, 19200, 38400, 57600, 115200, 128000};       /*array of all possible baud rates for bluetooth module*/
-      |              ^
-../Device/Src/jdy_slave.c(9): error: unknown type name 'uint8_t'
-    9 | static uint8_t current_baud_rate_index;       /*index of current baud rate, works with baud_rates[index]*/
-      |        ^
-../Device/Src/jdy_slave.c(10): error: unknown type name 'uint8_t'
-   10 | static uint8_t predefined_task[NUMBER_OF_TASKS];
-      |        ^
-../Device/Src/jdy_slave.c(13): error: unknown type name 'uint8_t'
-   13 | const uint8_t ATCommandVersion[ATCOMMAND_LENGTH_VERSION] = "AT+VERSION\r\n\0";
-      |       ^
-../Device/Src/jdy_slave.c(14): error: unknown type name 'uint8_t'
-   14 | const uint8_t ATCommandReset[ATCOMMAND_LENGTH_RESET] = "AT+RESET\r\n\0";
-      |       ^
-fatal error: too many errors emitted, stopping now [-ferror-limit=]
-20 errors generated.
-compiling jdy_slave.c...
-compiling stm32f1xx_hal_gpio.c...
-../Device/Src/jdy_slave_low_level.c(4): warning: In file included from...
-../Device/Inc\jdy_slave.h(36): error: unknown type name 'uint8_t'
-   36 | void bluetooth_command (uint8_t command);
-      |                         ^
-../Device/Inc\jdy_slave.h(38): error: unknown type name 'uint8_t'
-   38 | void bluetooth_receive_string (uint8_t *input_string, uint8_t string_length);
-      |                                ^
-../Device/Inc\jdy_slave.h(38): error: unknown type name 'uint8_t'
-   38 | void bluetooth_receive_string (uint8_t *input_string, uint8_t string_length);
-      |                                                       ^
-../Device/Inc\jdy_slave.h(39): error: unknown type name 'uint8_t'
-   39 | void bluetooth_send_string (uint8_t *output_string, uint8_t string_length);
-      |                             ^
-../Device/Inc\jdy_slave.h(39): error: unknown type name 'uint8_t'
-   39 | void bluetooth_send_string (uint8_t *output_string, uint8_t string_length);
-      |                                                     ^
-../Device/Inc\jdy_slave.h(42): error: unknown type name 'uint32_t'
-   42 | void bluetooth_uart_set (uint32_t baud_rate);
-      |                          ^
-../Device/Inc\jdy_slave.h(43): error: unknown type name 'uint8_t'
-   43 | uint8_t bluetooth_buffer_status ();
-      | ^
-../Device/Inc\jdy_slave.h(44): error: unknown type name 'uint8_t'
-   44 | void bluetooth_buffer_read (uint8_t *input_string, uint8_t string_length);
-      |                             ^
-../Device/Inc\jdy_slave.h(44): error: unknown type name 'uint8_t'
-   44 | void bluetooth_buffer_read (uint8_t *input_string, uint8_t string_length);
-      |                                                    ^
-../Device/Inc\jdy_slave.h(45): error: unknown type name 'uint8_t'
-   45 | void bluetooth_send_byte (uint8_t input_byte);
-      |                           ^
-../Device/Inc\jdy_slave.h(46): error: unknown type name 'uint32_t'
-   46 | void delay_function (uint32_t delay_ms);
-      |                      ^
-../Device/Inc\jdy_slave.h(48): error: unknown type name 'uint8_t'
-   48 | void task_switcher(uint8_t index);
-      |                    ^
-../Device/Src/jdy_slave_low_level.c(5): error: 'AltSoftSerial.h' file not found
-    5 | #include <AltSoftSerial.h>
-      |          ^~~~~~~~~~~~~~~~~
-13 errors generated.
-compiling jdy_slave_low_level.c...
+compiling stm32f1xx_hal.c...
+compiling stm32f1xx_hal_gpio_ex.c...
+compiling stm32f1xx_hal_rcc_ex.c...
 compiling stm32f1xx_hal_adc_ex.c...
+compiling stm32f1xx_hal_gpio.c...
+compiling usart.c...
+compiling stm32f1xx_hal_msp.c...
+compiling tim.c...
+compiling system_stm32f1xx.c...
+compiling stm32f1xx_hal_pwr.c...
+compiling jdy_slave.c...
+compiling stm32f1xx_hal_dma.c...
+compiling ds18b20.c...
+compiling stm32f1xx_hal_flash_ex.c...
+compiling stm32f1xx_hal_rcc.c...
 compiling ADS1220.c...
-compiling stm32f1xx_hal_adc.c...
-../Device/Src/jdy_slave_tasks.c(4): warning: In file included from...
-../Device/Inc\jdy_slave.h(36): error: unknown type name 'uint8_t'
-   36 | void bluetooth_command (uint8_t command);
-      |                         ^
-../Device/Inc\jdy_slave.h(38): error: unknown type name 'uint8_t'
-   38 | void bluetooth_receive_string (uint8_t *input_string, uint8_t string_length);
-      |                                ^
-../Device/Inc\jdy_slave.h(38): error: unknown type name 'uint8_t'
-   38 | void bluetooth_receive_string (uint8_t *input_string, uint8_t string_length);
-      |                                                       ^
-../Device/Inc\jdy_slave.h(39): error: unknown type name 'uint8_t'
-   39 | void bluetooth_send_string (uint8_t *output_string, uint8_t string_length);
-      |                             ^
-../Device/Inc\jdy_slave.h(39): error: unknown type name 'uint8_t'
-   39 | void bluetooth_send_string (uint8_t *output_string, uint8_t string_length);
-      |                                                     ^
-../Device/Inc\jdy_slave.h(42): error: unknown type name 'uint32_t'
-   42 | void bluetooth_uart_set (uint32_t baud_rate);
-      |                          ^
-../Device/Inc\jdy_slave.h(43): error: unknown type name 'uint8_t'
-   43 | uint8_t bluetooth_buffer_status ();
-      | ^
-../Device/Inc\jdy_slave.h(44): error: unknown type name 'uint8_t'
-   44 | void bluetooth_buffer_read (uint8_t *input_string, uint8_t string_length);
-      |                             ^
-../Device/Inc\jdy_slave.h(44): error: unknown type name 'uint8_t'
-   44 | void bluetooth_buffer_read (uint8_t *input_string, uint8_t string_length);
-      |                                                    ^
-../Device/Inc\jdy_slave.h(45): error: unknown type name 'uint8_t'
-   45 | void bluetooth_send_byte (uint8_t input_byte);
-      |                           ^
-../Device/Inc\jdy_slave.h(46): error: unknown type name 'uint32_t'
-   46 | void delay_function (uint32_t delay_ms);
-      |                      ^
-../Device/Inc\jdy_slave.h(48): error: unknown type name 'uint8_t'
-   48 | void task_switcher(uint8_t index);
-      |                    ^
-../Device/Src/jdy_slave_tasks.c(9): error: unknown type name 'uint8_t'
-    9 | void task_switcher(uint8_t index)
-      |                    ^
-13 errors generated.
 compiling jdy_slave_tasks.c...
-../Device/Src/oled.c(1): warning: In file included from...
-../Device/Inc\oled.h(4): error: 'sys.h' file not found
-    4 | #include "sys.h"
-      |          ^~~~~~~
-1 error generated.
-compiling oled.c...
+compiling stm32f1xx_hal_adc.c...
+compiling jdy_slave_low_level.c...
+compiling delay.c...
 compiling stm32f1xx_hal_tim_ex.c...
+compiling self_test.c...
 compiling stm32f1xx_hal_uart.c...
 compiling stm32f1xx_hal_tim.c...
-"software\software.axf" - 47 Error(s), 0 Warning(s).
+compiling oled.c...
+linking...
+Program Size: Code=16392 RO-data=6944 RW-data=12 ZI-data=3036  
+FromELF: creating hex file...
+"software\software.axf" - 0 Error(s), 0 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -234,7 +87,6 @@ Package Vendor: Keil
 
    * Component: ARM::CMSIS:CORE@6.1.1
       Include file:  CMSIS/Core/Include/tz_context.h
-Target not created.
 Build Time Elapsed:  00:00:02
 </pre>
 </body>

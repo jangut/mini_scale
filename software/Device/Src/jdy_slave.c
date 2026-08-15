@@ -31,8 +31,8 @@ void bluetooth_slave_init()
   bluetooth_uart_set(baud_rates[DEFAULT_BAUD_RATE_INDEX]);        /*sets the serial port and baud rate to control bluetooth module*/
   delay_function(STARTING_DELAY);       /*needed for settling the serial peripheral*/
   string_eraser(temporary_string, MAX_LENGTH_OF_STRING);        /*filling our temporary string with null*/
-  bluetooth_command(DISCONNECT);        /*DISCONECT allows us to send our commands to JDY_31, even if it is in data mode*/
-  bluetooth_command(RESET);       /*after turning to commmand mode, RESET will unpair our bluetooth module from any paired master*/
+  bluetooth_command(CMD_DISCONNECT);        /*DISCONECT allows us to send our commands to JDY_31, even if it is in data mode*/
+  bluetooth_command(CMD_RESET);       /*after turning to commmand mode, RESET will unpair our bluetooth module from any paired master*/
   for (uint8_t index = 0; index < NUMBER_OF_TASKS; index++)       /*filling our tasks array with predefined and incremental command keys*/
   {
     predefined_task[index] = TASK_COMMAND_STARTER + index;
@@ -44,39 +44,39 @@ void bluetooth_command (uint8_t command)
 {
   switch (command)
   {
-    case VERSION:
+    case CMD_VERSION:
       bluetooth_send_string (ATCommandVersion, ATCOMMAND_LENGTH_VERSION);
       break;
-    case RESET:
+    case CMD_RESET:
       bluetooth_send_string (ATCommandReset, ATCOMMAND_LENGTH_RESET);
       delay_function(RESET_DELAY_MS);       /*a delay is needed*/
       break;
-    case DISCONNECT:
+    case CMD_DISCONNECT:
       bluetooth_send_string (ATCommandDisconnect, ATCOMMAND_LENGTH_DISCONNECT);
       delay_function(DISCONNECT_DELAY_MS);
       break;
-    case MAC_REPORT:
+    case CMD_MAC_REPORT:
       bluetooth_send_string (ATCommandMAC, ATCOMMAND_LENGTH_MAC);
       break;
-    case PIN_REPORT:
+    case CMD_PIN_REPORT:
       bluetooth_send_string (ATCommandPIN, ATCOMMAND_LENGTH_PIN);
       break;
-    case PIN_CHANGE:
+    case CMD_PIN_CHANGE:
       bluetooth_send_string (ATCommandPINChange, ATCOMMAND_LENGTH_PIN_CHANGE);
       break;
-    case BAUD_REPORT:
+    case CMD_BAUD_REPORT:
       bluetooth_send_string (ATCommandBaud, ATCOMMAND_LENGTH_BAUD);
       break;
-    case BAUD_CHANGE:
+    case CMD_BAUD_CHANGE:
       bluetooth_send_string (ATCommandBaudChange, ATCOMMAND_LENGTH_BAUD_CHANGE);
       break;
-    case NAME_REPORT:
+    case CMD_NAME_REPORT:
       bluetooth_send_string (ATCommandName, ATCOMMAND_LENGTH_NAME);
       break;
-    case NAME_CHANGE:
+    case CMD_NAME_CHANGE:
       bluetooth_send_string (ATCommandNameChange, ATCOMMAND_LENGTH_NAME_CHANGE);
       break;
-    case DEFAULT_SETTING:
+    case CMD_DEFAULT_SETTING:
       bluetooth_send_string (ATCommandDefault, ATCOMMAND_LENGTH_DEFAULT_SETTING);
       break;
     default:
@@ -121,7 +121,7 @@ void bluetooth_buffer_flush()
 }
 
 /*function to send a string over serial port, could be AT commands or data. stops at NULL or predefined length, whichever happens first*/
-void bluetooth_send_string (uint8_t *output_string, uint8_t string_length)
+void bluetooth_send_string (const uint8_t *output_string, uint8_t string_length)
 {
  for (uint8_t counter = 0; (counter < string_length) && (*output_string != '\0'); counter++)
   {

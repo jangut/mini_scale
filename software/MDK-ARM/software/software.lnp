@@ -24,6 +24,14 @@
 "software\stm32f1xx_hal_tim_ex.o"
 "software\stm32f1xx_hal_uart.o"
 "software\system_stm32f1xx.o"
+"software\ads1220.o"
+"software\ds18b20.o"
+"software\jdy_slave.o"
+"software\jdy_slave_low_level.o"
+"software\jdy_slave_tasks.o"
+"software\oled.o"
+"software\delay.o"
+"software\self_test.o"
 --strict --scatter "software\software.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
 --info sizes --info totals --info unused --info veneers
