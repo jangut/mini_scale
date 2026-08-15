@@ -64,6 +64,23 @@ void Delay_us(uint32_t us)
 }
 
 /**
+ * @brief  Stop the delay timer (low-power support).
+ * @note   Call before entering STOP mode: TIM2 clock stops in STOP mode,
+ *         and without this the polling loop in Delay_us() would hang after
+ *         wake-up. Delay_us()/Delay_ms() re-initialize the timer on the
+ *         next call, so no explicit re-init is needed after wake-up.
+ */
+void Delay_Deinit(void)
+{
+  if (!s_timer_started)
+  {
+    return;
+  }
+  HAL_TIM_Base_Stop(&htim2);
+  s_timer_started = 0;
+}
+
+/**
  * @brief  Delay in milliseconds (blocking)
  * @param  ms: delay length in milliseconds
  */

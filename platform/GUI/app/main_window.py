@@ -95,14 +95,14 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._refresh_ports()
 
-        # 默认自动连接第一个可用串口（波特率 115200，与固件一致），
+        # 默认自动连接第一个可用串口（波特率 9600，与固件一致），
         # 插好 USB-TTL / 蓝牙 COM 后打开上位机即可直接接收数据。
         port = self._port_combo.currentText()
         if port and not port.startswith("（"):
             try:
                 baud = int(self._baud_combo.currentText())
             except ValueError:
-                baud = 115200
+                baud = 9600
             self._worker.connect(port, baud)
 
         # 网络来源且已设置城市：启动后异步获取并周期性刷新
@@ -150,9 +150,9 @@ class MainWindow(QMainWindow):
         bar.addWidget(QLabel("波特率:"))
         self._baud_combo = QComboBox()
         self._baud_combo.setEditable(True)
-        for b in ("115200", "57600", "38400", "19200", "9600", "4800"):
+        for b in ("9600", "115200", "57600", "38400", "19200", "4800"):
             self._baud_combo.addItem(b)
-        self._baud_combo.setCurrentText("115200")
+        self._baud_combo.setCurrentText("9600")
         self._baud_combo.setMinimumWidth(90)
         bar.addWidget(self._baud_combo)
 

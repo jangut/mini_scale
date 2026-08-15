@@ -37,6 +37,8 @@ typedef enum
 void        Scale_Init(void);
 void        Scale_Update(void);            /* call periodically (~20Hz) */
 void        Scale_Tare(void);              /* set current value as zero */
+void        Scale_Sleep(void);             /* power down ADS1220 before MCU STOP */
+void        Scale_Wakeup(void);            /* re-init ADC + quick warm-up (keeps tare) */
 float       Scale_GetWeight(void);         /* weight in gram */
 int32_t     Scale_GetRaw(void);            /* latest raw sample */
 int32_t     Scale_GetRawFiltered(void);    /* filtered raw value */

@@ -60,14 +60,33 @@ void I2C_Stop(void)
 }
 
 //等待信号响应
-void I2C_WaitAck(void) //测数据信号的电平
+uint8_t I2C_WaitAck(void)
 {
-	OLED_SDA_Set();
+	uint8_t i;
+	OLED_SDA_Set();          /* release SDA so the slave can pull it low */
 	IIC_delay();
 	OLED_SCL_Set();
 	IIC_delay();
+	if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_RESET)  /* SDA low = ACK */
+	{
+		OLED_SCL_Clr();
+		return 0;
+	}
+	/* no ACK: clock a few extra cycles, then give up (bounded, never hangs) */
+	for (i = 0; i < 8; i++)
+	{
+		OLED_SCL_Clr();
+		IIC_delay();
+		OLED_SCL_Set();
+		IIC_delay();
+		if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_RESET)
+		{
+			OLED_SCL_Clr();
+			return 0;
+		}
+	}
 	OLED_SCL_Clr();
-	IIC_delay();
+	return 1;
 }
 
 //写入一个字节
@@ -320,19 +339,22 @@ uint32_t OLED_Pow(uint8_t m,uint8_t n)
 void OLED_ShowNum(uint8_t x,uint8_t y,uint32_t num,uint8_t len,uint8_t size1,uint8_t mode)
 {
 	uint8_t t,temp,m=0;
+	uint8_t started = 0;   /* set once a non-zero digit has been printed */
 	if(size1==8)m=2;
 	for(t=0;t<len;t++)
 	{
 		temp=(num/OLED_Pow(10,len-t-1))%10;
-			if(temp==0)
-			{
-				OLED_ShowChar(x+(size1/2+m)*t,y,'0',size1,mode);
-      }
-			else 
-			{
-			  OLED_ShowChar(x+(size1/2+m)*t,y,temp+'0',size1,mode);
-			}
-  }
+		if(temp==0 && !started && t != (uint8_t)(len-1))
+		{
+			/* leading zero: blank instead of '0' (09600 -> " 9600") */
+			OLED_ShowChar(x+(size1/2+m)*t,y,' ',size1,mode);
+		}
+		else
+		{
+			started = 1;
+			OLED_ShowChar(x+(size1/2+m)*t,y,(uint8_t)(temp+'0'),size1,mode);
+		}
+	}
 }
 
 //显示汉字

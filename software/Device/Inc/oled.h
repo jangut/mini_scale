@@ -22,7 +22,7 @@ void OLED_ColorTurn(uint8_t i);
 void OLED_DisplayTurn(uint8_t i);
 void I2C_Start(void);
 void I2C_Stop(void);
-void I2C_WaitAck(void);
+uint8_t I2C_WaitAck(void);
 void Send_Byte(uint8_t dat);
 void OLED_WR_Byte(uint8_t dat,uint8_t mode);
 void OLED_DisPlay_On(void);

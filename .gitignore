@@ -277,7 +277,6 @@ platform/SerialUI-main/
 # 18. PSpice 仿真生成物（hardware/simulink/）
 ############################
 **/simulink-PSpiceFiles/
-Drivers
 
 ############################
 # 19. PyInstaller 构建产物（platform/GUI/）

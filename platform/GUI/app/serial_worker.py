@@ -104,11 +104,7 @@ class SerialWorker(QObject):
         parts = text.split(",")
         try:
             weight = float(parts[0].strip())
-        except ValueError:
-            return  # 跳过坏行
-        temp = float(parts[1].strip()) if len(parts) > 1 else float("nan")
-        try:
-            temp = float(temp)
-        except (TypeError, ValueError):
-            temp = float("nan")
+            temp = float(parts[1].strip()) if len(parts) > 1 else float("nan")
+        except (ValueError, IndexError):
+            return  # 跳过坏行（乱码、半行、空字段等，不能让它崩掉解析循环）
         self.data_ready.emit(time.time(), weight, temp)

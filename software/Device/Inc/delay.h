@@ -19,6 +19,7 @@ extern "C" {
 
 void Delay_us(uint32_t us);
 void Delay_ms(uint32_t ms);
+void Delay_Deinit(void);   /* stop TIM2 before entering STOP mode */
 
 /* kept for compatibility with jdy_slave (millisecond delay) */
 void delay_function(uint32_t delay_ms);

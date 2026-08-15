@@ -122,10 +122,12 @@ static int32_t Scale_AverageFilter(int32_t med)
   return sum / (int32_t)s_avgCnt;
 }
 
-/* one-pole IIR low-pass, alpha = 0.4 */
+/* one-pole IIR low-pass, alpha = 0.25.
+   Integer division adds a small dead-zone (<4 LSB) that suppresses jitter
+   while still tracking real load changes (tau ~ 4 samples = 200ms @20SPS). */
 static int32_t Scale_LowPass(int32_t in)
 {
-  s_iir += ((in - s_iir) * 4) / 10;
+  s_iir += ((in - s_iir) / 4);
   return s_iir;
 }
 
@@ -146,6 +148,26 @@ static uint8_t s_stableCnt;
 /* ------------------------------------------------------------------ */
 /*  Public API                                                         */
 /* ------------------------------------------------------------------ */
+
+/* Take `samples` single-shot conversions (StartSync + wait DRDY#) and
+   feed them through the filter chain, updating s_rawFilt. */
+static void Scale_Warmup(uint8_t samples)
+{
+  uint8_t i;
+  for (i = 0; i < samples; i++)
+  {
+    uint32_t timeout = 60u;
+    int32_t raw = 0;
+    ADS1220_StartSync(&s_adc);
+    while (ADC_DRDY_Read() != 0u && (timeout-- > 0u)) { Delay_ms(1); }
+    if (ADC_DRDY_Read() == 0u)
+    {
+      ADS1220_ReadData(&s_adc, &raw);
+      s_rawFilt = Scale_LowPass(Scale_AverageFilter(Scale_MedianFilter(raw)));
+    }
+  }
+}
+
 void Scale_Init(void)
 {
   uint8_t i;
@@ -166,7 +188,8 @@ void Scale_Init(void)
   s_params.GainConfig     = _1_;
   s_params.PGAdisable     = true;
   s_params.VoltageRef     = ExternalREF0;
-  s_params.FIRFilter      = No50or60Hz;
+  s_params.FIRFilter      = S50or60Hz;  /* reject mains 50/60Hz hum (20SPS FIR mode):
+                                           biggest source of reading wander */
   s_params.DataRate       = _20_SPS_;
   s_params.OperatingMode  = NormalMode;
   s_params.ConversionMode = false;   /* single-shot, StartSync per sample */
@@ -188,20 +211,27 @@ void Scale_Init(void)
 
   /* warm-up a few samples, then auto-tare at power-up (empty platform).
      Single-shot: StartSync then wait DRDY# (max ~60ms per sample). */
-  for (i = 0; i < (MEDIAN_N + AVG_N); i++)
-  {
-    uint32_t timeout = 60u;
-    ADS1220_StartSync(&s_adc);
-    while (ADC_DRDY_Read() != 0u && (timeout-- > 0u)) { Delay_ms(1); }
-    if (ADC_DRDY_Read() == 0u)
-    {
-      int32_t raw = 0;
-      ADS1220_ReadData(&s_adc, &raw);
-      s_rawFilt = Scale_LowPass(Scale_AverageFilter(Scale_MedianFilter(raw)));
-    }
-  }
+  Scale_Warmup(MEDIAN_N + AVG_N);
   s_zeroRaw  = s_rawFilt;
   s_lastFilt = s_rawFilt;
+  s_state    = SCALE_STATE_READY;
+}
+
+void Scale_Sleep(void)
+{
+  ADS1220_PowerDown(&s_adc);
+}
+
+void Scale_Wakeup(void)
+{
+  /* Re-init the ADC (registers may have been lost during the power-down),
+     then take a few samples so the filters start from current reality.
+     The tare zero (s_zeroRaw) is deliberately kept: waking up must not
+     re-zero a scale that still has a load on it. */
+  ADS1220_Init(&s_adc, &s_params);
+  Scale_Warmup(5u);
+  s_lastFilt = s_rawFilt;
+  s_faultCnt = 0; s_stableCnt = 0;
   s_state    = SCALE_STATE_READY;
 }
 
@@ -228,8 +258,10 @@ void Scale_Update(void)
 
   ADS1220_ReadData(&s_adc, &raw);
 
-  /* fault: out-of-range raw */
-  if ((raw <= 0) || ((uint32_t)raw >= FAULT_RAW_MAX))
+  /* fault: out-of-range raw. Lower bound is slightly negative so that a
+     small zero offset / noise around 0V does not trip the fault path
+     (ADS1220 single-ended output sits near 0 code at 0V input). */
+  if ((raw <= -0x8000) || ((uint32_t)raw >= FAULT_RAW_MAX))
   {
     if (s_faultCnt < 255u) { s_faultCnt++; }
     if (s_faultCnt >= 3u)

@@ -214,4 +214,19 @@ void TIM2_IRQHandler(void)
 
 /* USER CODE BEGIN 1 */
 
+/* KEY1/KEY2 wake-up from STOP mode (PB4=EXTI4, PB5=EXTI9_5).
+   Pins are configured as GPIO_MODE_IT_RISING in gpio.c; these handlers
+   only clear the pending bit. Without them any EXTI would fall through
+   to Default_Handler (infinite loop). */
+
+void EXTI4_IRQHandler(void)
+{
+  __HAL_GPIO_EXTI_CLEAR_IT(GPIO_PIN_4);
+}
+
+void EXTI9_5_IRQHandler(void)
+{
+  __HAL_GPIO_EXTI_CLEAR_IT(GPIO_PIN_5);
+}
+
 /* USER CODE END 1 */
