@@ -94,6 +94,31 @@ static uint8_t ADC_TransmitReceive(uint8_t data)
   return SPI_Shift(data);
 }
 
+/* Explicitly configure ADS1220 pins.
+   NOTE: gpio.c (CubeMX) wrongly sets PA6(MISO) as output; it must be input. */
+static void ADS1220_GPIO_Init(void)
+{
+  GPIO_InitTypeDef g = {0};
+
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /* CS, SCLK, MOSI: push-pull outputs */
+  g.Pin   = ADC_CS_PIN | ADC_SCLK_PIN | ADC_MOSI_PIN;
+  g.Mode  = GPIO_MODE_OUTPUT_PP;
+  g.Pull  = GPIO_NOPULL;
+  g.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOA, &g);
+
+  /* DRDY, MISO: inputs */
+  g.Pin   = ADC_DRDY_PIN | ADC_MISO_PIN;
+  g.Mode  = GPIO_MODE_INPUT;
+  g.Pull  = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &g);
+
+  /* CS idle high */
+  HAL_GPIO_WritePin(ADC_CS_PORT, ADC_CS_PIN, GPIO_PIN_SET);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Test items                                                         */
 /* ------------------------------------------------------------------ */
@@ -102,6 +127,8 @@ static uint8_t ADC_TransmitReceive(uint8_t data)
 static int32_t Test_ADS1220(void)
 {
   int32_t sample = 0;
+
+  ADS1220_GPIO_Init();
 
   s_adcHandler.ADC_CS_HIGH           = ADC_CS_HIGH;
   s_adcHandler.ADC_CS_LOW            = ADC_CS_LOW;
@@ -144,40 +171,58 @@ static void Test_Temperature(uint8_t *present, int16_t *temp)
 }
 
 /* Test 3: USART1 (JDY-31 bluetooth) - send AT+VERSION, check response */
+/* Test 3: UART echo test - for 10s, echo back any received byte and count it.
+   Works in transparent mode: connect phone/PC via bluetooth, send data,
+   board echoes it back and N: counts received bytes. B: shows current baud
+   rate (rotates through common values every 2s). */
 static uint8_t Test_UART(void)
 {
-  uint8_t cmd[]  = "AT+VERSION\r\n";
-  uint8_t resp[8];
-  static const uint32_t bauds[2] = {115200u, 9600u};  /* JDY-31 default is often 9600 */
-  uint8_t i;
-  HAL_StatusTypeDef st;
+  static const uint32_t bauds[5] = {115200u, 9600u, 57600u, 38400u, 19200u};
+  uint8_t  b;
+  uint8_t  bi = 0u;
+  uint32_t count = 0u;
+  uint32_t t = 0u;
 
-  for (i = 0u; i < 2u; i++)
+  OLED_ShowString(0, 24, (const uint8_t *)"UART:", 8, 1);
+  OLED_ShowString(40, 24, (const uint8_t *)"B:", 8, 1);
+  OLED_ShowString(90, 24, (const uint8_t *)"N:", 8, 1);
+  OLED_ShowNum(52, 24, bauds[0], 6, 8, 1);
+  OLED_ShowNum(102, 24, 0u, 3, 8, 1);
+  OLED_Refresh();
+
+  while (t < 10000u)
   {
-    /* flush RXNE before each attempt */
-    while (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE) != RESET)
+    /* rotate baud rate every 2s so the phone app can match it */
+    if ((t >= 2000u) && ((t % 2000u) == 0u) && (bi < 4u))
     {
-      (void)huart1.Instance->DR;
+      bi++;
+      huart1.Init.BaudRate = bauds[bi];
+      HAL_UART_Init(&huart1);
+      OLED_ShowNum(52, 24, bauds[bi], 6, 8, 1);
+      OLED_Refresh();
     }
 
-    if (huart1.Init.BaudRate != bauds[i])
+    /* transmit 'A' every 500ms: for loopback test (short PA9-TX to PA10-RX
+       on the header) the byte comes back and N: counts up, proving the
+       on-board UART works; over bluetooth the phone sees periodic 'A'. */
+    if ((t >= 500u) && ((t % 500u) == 0u))
     {
-      huart1.Init.BaudRate = bauds[i];
-      if (HAL_UART_Init(&huart1) != HAL_OK)
-      {
-        continue;
-      }
+      uint8_t txb = 'A';
+      HAL_UART_Transmit(&huart1, &txb, 1u, 50);
     }
 
-    HAL_UART_Transmit(&huart1, cmd, sizeof(cmd) - 1u, 200);
-    Delay_ms(200);
-    st = HAL_UART_Receive(&huart1, resp, 1u, 200);   /* wait for 1st byte */
-    if (st == HAL_OK)
+    if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE) != RESET)
     {
-      return 1u;
+      b = (uint8_t)(huart1.Instance->DR & 0xFFu);
+      count++;
+      HAL_UART_Transmit(&huart1, &b, 1u, 100);   /* echo back */
+      OLED_ShowNum(102, 24, count, 3, 8, 1);
+      OLED_Refresh();
     }
+    Delay_ms(10);
+    t += 10u;
   }
-  return 0u;
+  return (count > 0u) ? 1u : 0u;
 }
 
 /* Test 4: buttons PB4/PB5 (active high) */
@@ -235,11 +280,9 @@ void SelfTest_Run(void)
   }
   OLED_Refresh();
 
-  /* 3. UART / JDY-31 */
-  OLED_ShowString(0, 24, (const uint8_t *)"UART:", 8, 1);
-  OLED_Refresh();
+  /* 3. UART echo test (10s window shown at row 24 by Test_UART) */
   uartOk = Test_UART();
-  OLED_ShowString(48, 24, uartOk ? (const uint8_t *)"OK  " : (const uint8_t *)"NO  ", 8, 1);
+  OLED_ShowString(0, 40, uartOk ? (const uint8_t *)"UART OK " : (const uint8_t *)"UART NO ", 8, 1);
   OLED_Refresh();
 
   /* 4. keys - poll for 10s so you can press them and watch the result */

@@ -1,4 +1,4 @@
-"""主窗口：top_bar / graph / datas+export / state 四区布局。"""
+﻿"""主窗口：top_bar / graph / datas+export / state 四区布局。"""
 import csv
 import math
 import random
@@ -94,6 +94,16 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._refresh_ports()
+
+        # 默认自动连接第一个可用串口（波特率 115200，与固件一致），
+        # 插好 USB-TTL / 蓝牙 COM 后打开上位机即可直接接收数据。
+        port = self._port_combo.currentText()
+        if port and not port.startswith("（"):
+            try:
+                baud = int(self._baud_combo.currentText())
+            except ValueError:
+                baud = 115200
+            self._worker.connect(port, baud)
 
         # 网络来源且已设置城市：启动后异步获取并周期性刷新
         if self._temp_source == "network" and self._city:
