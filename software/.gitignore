@@ -22,3 +22,9 @@ MDK-ARM/*.uvoptx
 *.bin
 *.lst
 *.map
+
+# Keil 构建/链接产物（历史已跟踪文件已 git rm --cached，
+# 避免每次构建都产生 diff 噪音；.sct 保留以兼容旧工程）
+MDK-ARM/software/*.htm
+MDK-ARM/software/*.dep
+MDK-ARM/software/*.lnp

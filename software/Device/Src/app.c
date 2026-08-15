@@ -164,14 +164,17 @@ static void App_Key(void)
   k2 = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_SET) ? 1u : 0u;
   k1 = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_4) == GPIO_PIN_SET) ? 1u : 0u;
 
-  /* right after wake-up the wake-up key may still be held: sync the edge
-     detectors so that key press does not trigger tare / mode toggle */
+  /* right after wake-up the wake-up key may still be held: consume that
+     press entirely - it must neither tare (KEY2) nor, if held >2s, toggle
+     the mode (KEY1). s_k1Toggled is pre-set so a held KEY1 cannot switch
+     screens; it re-arms once the key is released (else branch below). */
   if (s_wakeSync)
   {
     s_lastK2 = k2;
     s_k1Pressed = k1 ? 1u : 0u;
+    s_k1Toggled = k1 ? 1u : 0u;
     s_k1Start = HAL_GetTick();
-    s_k1Toggled = 0u;
+    s_lastAct = HAL_GetTick();   /* the wake-up press counts as activity */
     s_wakeSync = 0u;
   }
 
@@ -354,7 +357,11 @@ static void App_Sleep(void)
   Delay_Deinit();         /* stop TIM2 so it re-inits after wake-up */
 
   /* STOP mode; wake-up source: KEY1/KEY2 rising edge (PB4/PB5 EXTI,
-     configured as GPIO_MODE_IT_RISING in gpio.c, NVIC in App_Init) */
+     configured as GPIO_MODE_IT_RISING in gpio.c, NVIC in App_Init).
+     HAL_SuspendTick() is REQUIRED: SysTick fires every 1ms, so without
+     suspending it the __WFI() inside HAL_PWR_EnterSTOPMode is woken
+     immediately by a pending SysTick -> the MCU never really sleeps. */
+  HAL_SuspendTick();
   HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
 
   /* --- execution resumes here after wake-up --- */
@@ -363,6 +370,7 @@ static void App_Sleep(void)
 
 static void App_Wakeup(void)
 {
+  HAL_ResumeTick();       /* re-enable SysTick (suspended before STOP) */
   SystemClock_Config();   /* STOP falls back to HSI: restore 72MHz PLL */
 
   OLED_Init();            /* re-init + display on (was powered off) */
@@ -378,6 +386,16 @@ static void App_Wakeup(void)
 /* ------------------------------------------------------------------ */
 /*  Public                                                             */
 /* ------------------------------------------------------------------ */
+
+/* Debugger attached? C_DEBUGEN is set by the SWD probe while connected.
+   When a debugger is attached we must NOT enter STOP mode: a stopped
+   core cannot be halted by the probe (Keil: "Could not stop Cortex-M
+   device"), so auto-sleep is skipped during debug sessions. */
+static uint8_t App_DebuggerAttached(void)
+{
+  return (CoreDebug->DHCSR & CoreDebug_DHCSR_C_DEBUGEN_Msk) ? 1u : 0u;
+}
+
 void App_Init(void)
 {
   OLED_Init();
@@ -422,8 +440,10 @@ void App_Loop(void)
     s_lastDisp = now;
   }
 
-  /* auto sleep: no key activity for AUTO_SLEEP_MS */
-  if ((uint32_t)(now - s_lastAct) >= AUTO_SLEEP_MS)
+  /* auto sleep: no key activity for AUTO_SLEEP_MS. Skipped while a
+     debugger is attached - a core in STOP mode cannot be halted by the
+     SWD probe ("Could not stop Cortex-M device" in Keil). */
+  if (!App_DebuggerAttached() && ((uint32_t)(now - s_lastAct) >= AUTO_SLEEP_MS))
   {
     App_Sleep();            /* blocks until wake-up */
     now = HAL_GetTick();    /* tick jumped; re-sync local copy */

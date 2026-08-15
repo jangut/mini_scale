@@ -138,6 +138,16 @@ static int32_t Scale_LowPass(int32_t in)
 #define STABLE_LSB        400       /* ~0.28g at 0.0007g/LSB calibrated */
 #define STABLE_CNT        10
 
+/* Zero-drift tracking (auto-zero): on an unloaded scale, slowly pull the
+   tare zero toward the current reading so that thermal / creep / supply
+   drift does not accumulate on the display. Tracking stops as soon as a
+   real load above AUTO_ZERO_G is applied.
+   Rates: with DIV=4 the display absorbs drift up to ~1.5 g/s (steady-state
+   error = drift * 0.2s, must stay below AUTO_ZERO_G); loads >= 0.3 g are
+   never absorbed. Tune these two macros to the measured drift rate. */
+#define AUTO_ZERO_G       0.3f      /* |weight| below this -> absorb drift (g) */
+#define AUTO_ZERO_DIV     4         /* tracking rate: 1/4 per sample (~0.2s tau) */
+
 static Scale_State_t s_state;
 static int32_t s_zeroRaw;      /* tare offset (raw) */
 static int32_t s_rawFilt;      /* filtered raw */
@@ -149,21 +159,25 @@ static uint8_t s_stableCnt;
 /*  Public API                                                         */
 /* ------------------------------------------------------------------ */
 
-/* Take `samples` single-shot conversions (StartSync + wait DRDY#) and
-   feed them through the filter chain, updating s_rawFilt. */
+/* Take `samples` successful single-shot conversions (StartSync + wait
+   DRDY#) and feed them through the filter chain, updating s_rawFilt.
+   Timed-out conversions are simply retried (bounded), never fed as 0. */
 static void Scale_Warmup(uint8_t samples)
 {
-  uint8_t i;
-  for (i = 0; i < samples; i++)
+  uint8_t got = 0u;
+  uint16_t tries = 0u;   /* uint16: samples*3 can exceed uint8 range */
+  while (got < samples && tries < (uint16_t)(samples * 3u))
   {
     uint32_t timeout = 60u;
     int32_t raw = 0;
+    tries++;
     ADS1220_StartSync(&s_adc);
     while (ADC_DRDY_Read() != 0u && (timeout-- > 0u)) { Delay_ms(1); }
     if (ADC_DRDY_Read() == 0u)
     {
       ADS1220_ReadData(&s_adc, &raw);
       s_rawFilt = Scale_LowPass(Scale_AverageFilter(Scale_MedianFilter(raw)));
+      got++;
     }
   }
 }
@@ -260,8 +274,11 @@ void Scale_Update(void)
 
   /* fault: out-of-range raw. Lower bound is slightly negative so that a
      small zero offset / noise around 0V does not trip the fault path
-     (ADS1220 single-ended output sits near 0 code at 0V input). */
-  if ((raw <= -0x8000) || ((uint32_t)raw >= FAULT_RAW_MAX))
+     (ADS1220 single-ended output sits near 0 code at 0V input).
+     NOTE: both comparisons are SIGNED - casting a negative raw to
+     uint32_t here would misclassify it as "too large" and drop valid
+     samples, biasing the filters upward. */
+  if ((raw < -0x8000) || (raw > (int32_t)FAULT_RAW_MAX))
   {
     if (s_faultCnt < 255u) { s_faultCnt++; }
     if (s_faultCnt >= 3u)
@@ -294,6 +311,27 @@ void Scale_Update(void)
   else
   {
     s_state = (s_stableCnt >= STABLE_CNT) ? SCALE_STATE_STABLE : SCALE_STATE_READY;
+  }
+
+  /* zero-drift tracking (auto-zero): on an unloaded scale the tare zero is
+     slowly pulled toward the reading, so thermal / creep / supply drift
+     does not accumulate on the display (the "weight keeps climbing"
+     symptom). As soon as a real load above AUTO_ZERO_G is present the
+     tracking stops, so genuine weight is never absorbed.
+     s_stableCnt is cleared only when the zero actually moved (step != 0),
+     otherwise a settled unloaded scale could never reach STABLE. */
+  if ((s_state != SCALE_STATE_FAULT) && (s_state != SCALE_STATE_OVERLOAD))
+  {
+    float w = Scale_GetWeight();
+    if ((w > -AUTO_ZERO_G) && (w < AUTO_ZERO_G))
+    {
+      int32_t step = (s_rawFilt - s_zeroRaw) / AUTO_ZERO_DIV;
+      if (step != 0)
+      {
+        s_zeroRaw += step;
+        s_stableCnt = 0u;   /* zero moved: not a settled reading */
+      }
+    }
   }
 }
 
