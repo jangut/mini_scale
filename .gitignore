@@ -219,7 +219,6 @@ tags
 ############################
 REASONIX.md
 .reasonix/
-reasonix.toml
 
 ############################
 # 15. Flutter 相关
