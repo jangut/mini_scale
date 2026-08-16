@@ -1,0 +1,14 @@
+--- a/platform/GUI/app/serial_worker.py
++++ b/platform/GUI/app/serial_worker.py
+@@ -55,6 +55,11 @@
+         try:
+             self._serial = serial.Serial(port, baudrate, timeout=0)
++            # 关键修复：pyserial 默认 DTR/RTS 为高，会复位板载 ESP32-S3
++            # （CH343 自动下载电路），S3 复位后占用/干扰 UART0 与 STM32
++            # 抢线，导致收到的数据变成乱码、GUI 解析失败不显示。
++            # 打开串口后立即置低即可（S3 不再被复位，透传干净）。
++            self._serial.dtr = False
++            self._serial.rts = False
+         except Exception as exc:
+             self.error.emit(f"打开 {port} 失败: {exc}")
+             self.connected.emit(False, "")

@@ -18,6 +18,10 @@
 #define OLED_CMD  0	//Ð´ÃüÁî
 #define OLED_DATA 1	//Ð´Êý¾Ý
 
+/* frame buffer, 128 columns x 8 pages (144 wide: legacy layout, only the
+   first 128 columns are used by OLED_Refresh) */
+extern uint8_t OLED_GRAM[144][8];
+
 void OLED_ColorTurn(uint8_t i);
 void OLED_DisplayTurn(uint8_t i);
 void I2C_Start(void);

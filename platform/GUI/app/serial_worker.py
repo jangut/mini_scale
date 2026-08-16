@@ -56,6 +56,14 @@ class SerialWorker(QObject):
             return
         try:
             self._serial = serial.Serial(port, baudrate, timeout=0)
+            # 防止 DTR/RTS 保持高电平干扰板载 ESP32-S3（CH343 自动下载
+            # 电路）：S3 复位后会占用 UART0 与 STM32 抢线导致乱码。
+            # 注：本机 pyserial 版本不支持 do_not_open，只能在 open 后置低。
+            try:
+                self._serial.dtr = False
+                self._serial.rts = False
+            except Exception:
+                pass   # 无流控线的虚拟串口：忽略即可
         except Exception as exc:
             self.error.emit(f"打开 {port} 失败: {exc}")
             self.connected.emit(False, "")

@@ -135,7 +135,7 @@ static int32_t Scale_LowPass(int32_t in)
 /*  State                                                              */
 /* ------------------------------------------------------------------ */
 #define FAULT_RAW_MAX     0x7FFFF0u
-#define STABLE_LSB        400       /* ~0.28g at 0.0007g/LSB calibrated */
+#define STABLE_LSB        400       /* ~0.33g at 0.00084g/LSB calibrated */
 #define STABLE_CNT        10
 
 /* Zero-drift tracking (auto-zero): on an unloaded scale, slowly pull the
@@ -148,12 +148,56 @@ static int32_t Scale_LowPass(int32_t in)
 #define AUTO_ZERO_G       0.3f      /* |weight| below this -> absorb drift (g) */
 #define AUTO_ZERO_DIV     4         /* tracking rate: 1/4 per sample (~0.2s tau) */
 
+/* Load-step freeze: when the filtered raw jumps faster than a real drift
+   could (>= AZ_STEP_RATE LSB/sample, ~5 g placed), a load is being placed
+   or removed. Auto-zero is then frozen for AZ_FREEZE_MS so the tare zero
+   is not nudged while the filtered reading transitions through the
+   < 0.3 g window (otherwise ~0.1 g of the load would be silently eaten). */
+#define AZ_STEP_RATE      200       /* per-sample raw jump = load step (drift max ~30) */
+#define AZ_FREEZE_MS      2000u     /* hold auto-zero off after a step */
+
+/* Power-on soak (fully adaptive): after power-on the zero drifts
+   exponentially, but the direction, amplitude and rate vary every
+   power-on (measured +6 g one boot, -16 g the next) - far above the
+   normal auto-zero window (0.3 g), which is why the display visibly
+   climbs. While soaking, the zero unconditionally follows the reading
+   (any drift shape is absorbed, the display holds at 0). The soak ends
+   when the REAL drift rate (rawFilt per-sample change) has been below
+   SOAK_SETTLE_RATE for SOAK_SETTLE_MS - i.e. the drift is over and the
+   normal slow auto-zero can safely take over - or after SOAK_MAX_MS
+   (safety net). TRADEOFF: anything placed on the scale during the soak
+   is absorbed to zero - the warm-up phase is not a measuring phase. */
+#define SOAK_SETTLE_RATE  30        /* raw drift < 30 LSB/sample (~0.5 g/s) -> over */
+#define SOAK_SETTLE_MS    5000u     /* drift-rate low for this long -> hand over */
+#define SOAK_MAX_MS       60000u    /* safety net: force end after 60 s */
+
 static Scale_State_t s_state;
 static int32_t s_zeroRaw;      /* tare offset (raw) */
 static int32_t s_rawFilt;      /* filtered raw */
 static int32_t s_lastFilt;
 static uint8_t s_faultCnt;
 static uint8_t s_stableCnt;
+static uint32_t s_soakT0;      /* power-on soak start tick */
+static uint8_t  s_soaking;     /* 1 = soak active */
+static uint32_t s_soakSettleT0;/* tick when the raw drift rate went low */
+static int32_t  s_prevFilt;    /* previous filtered raw, for the drift-rate check */
+
+/* Temperature compensation: the bridge zero drifts with temperature
+   (fitted -43 raw LSB per degC from the 15-min capture). Compensation is
+   RELATIVE: the reference is the temperature at tare (and at the first
+   real reading after power-on), so a tare always shows 0 and only the
+   temperature change afterwards is compensated. */
+#define TEMP_COEF_LSB_PER_C  (-43)      /* raw LSB per degC (measured) */
+
+/* Full-range nonlinearity correction (fit from the 0-500 g capture:
+   true = A*w + B*w^2 with w = raw*LSB display value; residual < 0.25 g
+   over 50-500 g, hysteresis ~0.4 g not correctable in software). */
+#define SCALE_NL_A          1.0008f
+#define SCALE_NL_B          7.23e-6f
+static float   s_tempC = 25.0f;         /* current temperature (degC) */
+static float   s_tempRef = 25.0f;       /* tare-time temperature (degC) */
+static uint8_t s_tempRefInit = 0u;      /* first real reading sets the reference */
+static uint32_t s_azFreezeUntil = 0u;   /* auto-zero frozen until this tick */
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                         */
@@ -221,6 +265,9 @@ void Scale_Init(void)
   for (i = 0; i < AVG_N; i++)    { s_avgBuf[i] = 0; }
   s_medIdx = 0; s_avgIdx = 0; s_avgCnt = 0;
   s_faultCnt = 0; s_stableCnt = 0;
+  s_soakT0 = HAL_GetTick();   /* power-on soak starts now */
+  s_soaking = 1u;
+  s_soakSettleT0 = 0u;
   s_state = SCALE_STATE_INIT;
 
   /* warm-up a few samples, then auto-tare at power-up (empty platform).
@@ -228,6 +275,7 @@ void Scale_Init(void)
   Scale_Warmup(MEDIAN_N + AVG_N);
   s_zeroRaw  = s_rawFilt;
   s_lastFilt = s_rawFilt;
+  s_prevFilt = s_rawFilt;
   s_state    = SCALE_STATE_READY;
 }
 
@@ -252,7 +300,21 @@ void Scale_Wakeup(void)
 void Scale_Tare(void)
 {
   s_zeroRaw  = s_rawFilt;
+  s_tempRef  = s_tempC;     /* temperature compensation is relative to tare */
   s_stableCnt = 0;
+}
+
+/* Feed the current temperature (from the app's DS18B20 task). The first
+   real reading after power-on also sets the compensation reference, so
+   the display starts near 0 without a tare. */
+void Scale_SetTempC(float temp_c)
+{
+  if (!s_tempRefInit)
+  {
+    s_tempRef = temp_c;
+    s_tempRefInit = 1u;
+  }
+  s_tempC = temp_c;
 }
 
 void Scale_Update(void)
@@ -318,14 +380,55 @@ void Scale_Update(void)
      does not accumulate on the display (the "weight keeps climbing"
      symptom). As soon as a real load above AUTO_ZERO_G is present the
      tracking stops, so genuine weight is never absorbed.
+     During the power-on soak the zero unconditionally follows the reading
+     (drift direction/amplitude/rate vary every power-on, so no fixed
+     gates can separate it from a load); the soak ends when the raw drift
+     RATE has been low for SOAK_SETTLE_MS (the drift is really over) or
+     after SOAK_MAX_MS. TRADEOFF: anything placed on the scale during the
+     soak is absorbed - the warm-up phase is not a measuring phase.
      s_stableCnt is cleared only when the zero actually moved (step != 0),
      otherwise a settled unloaded scale could never reach STABLE. */
   if ((s_state != SCALE_STATE_FAULT) && (s_state != SCALE_STATE_OVERLOAD))
   {
     float w = Scale_GetWeight();
-    if ((w > -AUTO_ZERO_G) && (w < AUTO_ZERO_G))
+    int32_t delta = s_rawFilt - s_zeroRaw;
+    int32_t rawRate = s_rawFilt - s_prevFilt;   /* real drift rate this sample */
+    s_prevFilt = s_rawFilt;
+    if ((rawRate > AZ_STEP_RATE) || (rawRate < -AZ_STEP_RATE))
     {
-      int32_t step = (s_rawFilt - s_zeroRaw) / AUTO_ZERO_DIV;
+      s_azFreezeUntil = HAL_GetTick() + AZ_FREEZE_MS;   /* load placed/removed */
+    }
+    if (s_soaking)
+    {
+      if ((int32_t)(HAL_GetTick() - s_soakT0) >= (int32_t)SOAK_MAX_MS)
+      {
+        s_soaking = 0u;   /* safety net */
+      }
+      else if ((rawRate > -SOAK_SETTLE_RATE) && (rawRate < SOAK_SETTLE_RATE))
+      {
+        if (s_soakSettleT0 == 0u) { s_soakSettleT0 = HAL_GetTick(); }
+        else if ((int32_t)(HAL_GetTick() - s_soakSettleT0) >= (int32_t)SOAK_SETTLE_MS)
+        {
+          s_soaking = 0u;   /* drift over: safe hand-over to normal auto-zero */
+        }
+      }
+      else
+      {
+        s_soakSettleT0 = 0u;   /* drift still active */
+      }
+      if (s_soaking && (delta != 0))
+      {
+        s_zeroRaw += delta;   /* unconditional full absorption */
+        s_stableCnt = 0u;     /* zero moved: not a settled reading */
+      }
+    }
+    else if ((int32_t)(HAL_GetTick() - s_azFreezeUntil) < 0)
+    {
+      /* frozen after a load step: leave the tare zero untouched */
+    }
+    else if ((w > -AUTO_ZERO_G) && (w < AUTO_ZERO_G))
+    {
+      int32_t step = delta / AUTO_ZERO_DIV;
       if (step != 0)
       {
         s_zeroRaw += step;
@@ -337,7 +440,13 @@ void Scale_Update(void)
 
 float Scale_GetWeight(void)
 {
-  return (float)(s_rawFilt - s_zeroRaw) * SCALE_LSB_TO_G;
+  float raw = (float)(s_rawFilt - s_zeroRaw);
+  float w;
+  raw -= (float)TEMP_COEF_LSB_PER_C * (s_tempC - s_tempRef);  /* temperature comp. */
+  w = raw * SCALE_LSB_TO_G;
+  /* full-range nonlinearity correction: map display value to true weight */
+  w = SCALE_NL_A * w + SCALE_NL_B * w * w;
+  return w;
 }
 
 int32_t Scale_GetRaw(void)         { return s_rawFilt; }

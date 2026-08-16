@@ -47,14 +47,24 @@
 
 /* Warm-up: the UART report stays suppressed until the raw ADC reading is
    stable. "Stable" = the filtered raw value wanders less than
-   WARMUP_STABLE_LSB (same ~0.28 g as scale.c STABLE_LSB) for
+   WARMUP_STABLE_LSB (same ~0.33 g as scale.c STABLE_LSB) for
    WARMUP_STABLE_MS, OR WARMUP_MAX_MS elapsed (safety net). The RAW value
    is used on purpose: the display value is pulled to zero by auto-zero on
    an unloaded scale, which would mask the real drift and end the warm-up
    too early. */
-#define WARMUP_STABLE_LSB  400      /* ~0.28 g, matches scale.c STABLE_LSB */
-#define WARMUP_STABLE_MS   5000u    /* consecutive stable time -> warm-up ends */
+#define WARMUP_STABLE_LSB  400      /* ~0.33 g, matches scale.c STABLE_LSB */
+#define WARMUP_STABLE_MS   7000u    /* consecutive stable time -> warm-up ends.
+                                       Kept conservative so UART reporting
+                                       resumes only after the scale.c power-on
+                                       soak has safely handed over. */
 #define WARMUP_MAX_MS      60000u   /* hard timeout: warm-up ends after 60 s */
+
+/* --- TEMPORARY TEST BUILD ------------------------------------------------
+   Streams the filtered raw ADC code (tare/auto-zero NOT applied) over UART
+   from power-on: no warm-up gating, no auto-sleep. Purpose: capture the
+   zero-point drift curve to fit a drift-suppression model.
+   Set back to 0 for the normal firmware (weight,temp report + sleep). */
+#define TEST_RAW_STREAM 1
 
 /* defined in main.c (CubeMX-generated); re-run it after STOP wake-up to
    restore the 72MHz PLL clock (STOP mode falls back to HSI) */
@@ -162,6 +172,7 @@ static void App_TempTask(void)
     if ((int32_t)(HAL_GetTick() - s_tempDue) >= 0)
     {
       s_tempC = (float)Read_Temp_Result() * 0.1f;
+      Scale_SetTempC(s_tempC);   /* feed the scale's temperature compensation */
       s_tempState = 0u;
     }
   }
@@ -405,11 +416,33 @@ static void App_Display(void)
 /* ------------------------------------------------------------------ */
 static void App_UartSend(void)
 {
-  float w = Scale_GetWeight();
   int32_t t10  = App_Temp10();
   char buf[24];
   uint8_t len = 0;
 
+#if TEST_RAW_STREAM
+  /* test build: stream the DISPLAY value ("weight,temp\n", 2 decimals) so
+     the power-on soak / auto-zero effect is visible on the host. Sleep
+     and warm-up gating are disabled in this build. */
+  {
+    float wv = Scale_GetWeight();
+    int32_t w100 = (int32_t)(wv * 100.0f + ((wv >= 0.0f) ? 0.5f : -0.5f));
+    len += App_Fmt2(buf + len, w100);
+    buf[len++] = ',';
+    len += App_Fmt1(buf + len, t10);
+    buf[len++] = '\n';
+  }
+  if (HAL_UART_Transmit(&huart1, (uint8_t *)buf, len, 50) != HAL_OK)
+  {
+    /* clear sticky error flags so the drift stream cannot stall */
+    __HAL_UART_CLEAR_OREFLAG(&huart1);
+    __HAL_UART_CLEAR_PEFLAG(&huart1);
+    __HAL_UART_CLEAR_FEFLAG(&huart1);
+    __HAL_UART_CLEAR_NEFLAG(&huart1);
+  }
+  return;
+#else
+  float w = Scale_GetWeight();
   if (s_mode == 1u)
   {
     /* device/calibration mode: raw,temp\n (raw ADC value for the host) */
@@ -439,15 +472,22 @@ static void App_UartSend(void)
     __HAL_UART_CLEAR_FEFLAG(&huart1);
     __HAL_UART_CLEAR_NEFLAG(&huart1);
   }
+#endif /* TEST_RAW_STREAM */
 }
 
 /* ------------------------------------------------------------------ */
-/*  Low power: auto sleep + wake-up                                    */
+/*  Low power: auto sleep + wake-up (compiled out in the test build)   */
 /* ------------------------------------------------------------------ */
+#if !TEST_RAW_STREAM
 static void App_Wakeup(void);
 
 static void App_Sleep(void)
 {
+  /* tell the host the device is going to sleep (its port will go silent) */
+  {
+    static const uint8_t sleepMsg[] = "SLEEP\n";
+    HAL_UART_Transmit(&huart1, (uint8_t *)sleepMsg, sizeof(sleepMsg) - 1u, 50u);
+  }
   /* brief hint, then power down */
   OLED_Clear();
   OLED_ShowString(0, 28, (const uint8_t *)"Sleep...", 16, 1);
@@ -484,6 +524,7 @@ static void App_Wakeup(void)
   s_lastDisp = 0u;
   s_wakeSync = 1u;        /* the wake-up key must not trigger actions */
 }
+#endif /* !TEST_RAW_STREAM */
 
 /* ------------------------------------------------------------------ */
 /*  Public                                                             */
@@ -506,8 +547,13 @@ void App_Init(void)
   /* JDY-31 bluetooth: disconnect + soft-reset the module so it starts
      from a clean transparent-mode state (the jdy_slave driver used to be
      compiled but never called; a module left paired/busy from a previous
-     session would otherwise never forward data). ~450ms extra at boot. */
+     session would otherwise never forward data). ~450ms extra at boot.
+     Skipped in the TEST build: the raw stream must not be polluted by AT
+     commands, and a failed HAL_UART_Init here would trap in Error_Handler
+     and leave the OLED blank. */
+#if !TEST_RAW_STREAM
   bluetooth_slave_init();
+#endif
 
   /* KEY1/KEY2 EXTI wake-up from STOP mode. The pins are already
      configured as GPIO_MODE_IT_RISING by gpio.c; the ISRs live in
@@ -559,10 +605,32 @@ void App_Loop(void)
   now = HAL_GetTick();
   if ((uint32_t)(now - s_lastUart) >= 50u)   /* ~20Hz report */
   {
-    if ((int32_t)(now - s_warmupEnd) >= 0)   /* suppressed during warm-up */
+#if TEST_RAW_STREAM
+    App_UartSend();                          /* test build: always stream */
+#else
+    if ((int32_t)(now - s_warmupEnd) >= 0)
     {
       App_UartSend();
     }
+    else
+    {
+      /* warm-up: instead of silence, send a status line once per second
+         ("WARMUP:<seconds left>") so the host port never looks dead */
+      static uint32_t warmupLast = 0u;
+      if ((uint32_t)(now - warmupLast) >= 1000u)
+      {
+        char wb[16];
+        uint8_t wn = 0;
+        uint32_t remain = (s_warmupEnd - now + 999u) / 1000u;   /* ceil, s */
+        wb[wn++] = 'W'; wb[wn++] = 'A'; wb[wn++] = 'R'; wb[wn++] = 'M';
+        wb[wn++] = 'U'; wb[wn++] = 'P'; wb[wn++] = ':';
+        wn += App_itoa(wb + wn, remain);
+        wb[wn++] = '\n';
+        HAL_UART_Transmit(&huart1, (uint8_t *)wb, wn, 50u);
+        warmupLast = now;
+      }
+    }
+#endif
     s_lastUart = now;
   }
   if ((uint32_t)(now - s_lastDisp) >= 200u)  /* ~5Hz display refresh */
@@ -576,11 +644,13 @@ void App_Loop(void)
      reading change restarts the window. Skipped while a debugger is
      attached - a core in STOP mode cannot be halted by the SWD probe
      ("Could not stop Cortex-M device" in Keil). */
+#if !TEST_RAW_STREAM
   if (!App_DebuggerAttached() && ((uint32_t)(now - s_lastStable) >= STABLE_SLEEP_MS))
   {
     App_Sleep();            /* blocks until wake-up */
     now = HAL_GetTick();    /* tick jumped; re-sync local copy */
   }
+#endif
 
   Delay_ms(APP_LOOP_MS);
 }
