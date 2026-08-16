@@ -12,10 +12,19 @@
  *   KEY1 (PB4, "开关") = long press (>2s) toggles device status mode
  *
  * Low power:
- *   Auto-sleep after AUTO_SLEEP_MS without key activity (STOP mode).
+ *   Auto-sleep only when the reading stays stable (drift within
+ *   STABLE_SLEEP_THRESHOLD_G) for STABLE_SLEEP_MS (2 min) AND there was no
+ *   key activity (any key press / reading change restarts the window).
  *   Wake-up on any key press (PB4/PB5 EXTI rising edge, see App_Init).
  *   NOTE: OLED keeps its supply; OLED_DisPlay_Off() is used to cut the
  *   display current while sleeping (hardware power switch would be better).
+ *
+ * Warm-up:
+ *   After power-on the sensor/ADC reading wanders until the analog chain
+ *   settles, so the UART report is suppressed (and the OLED shows a
+ *   countdown) until the filtered RAW reading is stable for
+ *   WARMUP_STABLE_MS (or WARMUP_MAX_MS elapses). Filtering keeps running
+ *   so the reading is converged by the time reporting starts.
  **********************************************************************************
  **/
 #include "app.h"
@@ -24,10 +33,28 @@
 #include "usart.h"
 #include "scale.h"
 #include "ds18b20.h"
+#include "jdy_slave.h"
+#include "self_test.h"
 
 #define APP_LOOP_MS        5u       /* loop delay only; scheduling uses HAL_GetTick */
 #define TEMP_CONVERT_MS    750u     /* DS18B20 12-bit conversion time */
-#define AUTO_SLEEP_MS      60000u   /* no-key timeout before auto sleep (60s) */
+
+/* Sleep gating: the device sleeps only after the reading has stayed
+   stable (window drift within STABLE_SLEEP_THRESHOLD_G) for
+   STABLE_SLEEP_MS. Any key press or reading change restarts the window. */
+#define STABLE_SLEEP_MS          120000u  /* 2 min of stable reading before sleep */
+#define STABLE_SLEEP_THRESHOLD_G 1.0f     /* max window drift (g) still "stable" */
+
+/* Warm-up: the UART report stays suppressed until the raw ADC reading is
+   stable. "Stable" = the filtered raw value wanders less than
+   WARMUP_STABLE_LSB (same ~0.28 g as scale.c STABLE_LSB) for
+   WARMUP_STABLE_MS, OR WARMUP_MAX_MS elapsed (safety net). The RAW value
+   is used on purpose: the display value is pulled to zero by auto-zero on
+   an unloaded scale, which would mask the real drift and end the warm-up
+   too early. */
+#define WARMUP_STABLE_LSB  400      /* ~0.28 g, matches scale.c STABLE_LSB */
+#define WARMUP_STABLE_MS   5000u    /* consecutive stable time -> warm-up ends */
+#define WARMUP_MAX_MS      60000u   /* hard timeout: warm-up ends after 60 s */
 
 /* defined in main.c (CubeMX-generated); re-run it after STOP wake-up to
    restore the 72MHz PLL clock (STOP mode falls back to HSI) */
@@ -150,12 +177,70 @@ static uint8_t  s_lastK2 = 0u;
 static uint8_t  s_k1Pressed = 0u;
 static uint32_t s_k1Start = 0u;
 static uint8_t  s_k1Toggled = 0u;
-static uint32_t s_lastAct = 0u;   /* tick of last key activity */
 static uint8_t  s_wakeSync = 0u;  /* set after wake-up to ignore the wake key */
+
+/* stability window: s_lastStable = tick when the current stable period
+   started; s_stableBase = reading at that moment. The window restarts on
+   any key press or whenever the reading drifts more than
+   STABLE_SLEEP_THRESHOLD_G from s_stableBase. */
+static uint32_t s_lastStable = 0u;
+static float    s_stableBase = 0.0f;
+
+/* power-on warm-up: UART reporting suppressed until the raw reading is
+   stable. s_warmupBaseRaw = raw window anchor; s_warmupStableT0 = tick
+   when the current stable run started. */
+static uint32_t s_warmupEnd = 0u;      /* tick when warm-up ends */
+static int32_t  s_warmupBaseRaw = 0;   /* filtered-raw window anchor */
+static uint32_t s_warmupStableT0 = 0u; /* stable-run start tick */
 
 /* scheduling timestamps (file scope so App_Wakeup can reset them) */
 static uint32_t s_lastUart = 0u;
 static uint32_t s_lastDisp = 0u;
+
+/* Any key press / reading change counts as activity: restart the stable
+   window from now, anchored at the current reading. */
+static void App_MarkActivity(void)
+{
+  s_lastStable = HAL_GetTick();
+  s_stableBase = Scale_GetWeight();
+}
+
+/* Reading drift check: if the current reading moved more than the
+   threshold from the window anchor, the scale is in use -> restart the
+   stable window at the new value. */
+static void App_StabilityCheck(void)
+{
+  float d = Scale_GetWeight() - s_stableBase;
+  if (d < 0.0f) { d = -d; }
+  if (d > STABLE_SLEEP_THRESHOLD_G)
+  {
+    s_lastStable = HAL_GetTick();
+    s_stableBase = Scale_GetWeight();
+  }
+}
+
+/* Auto warm-up detection on the filtered RAW ADC value: while warming up,
+   any raw drift beyond WARMUP_STABLE_LSB restarts the stable run;
+   WARMUP_STABLE_MS of no drift ends the warm-up early. The display value
+   is NOT used (auto-zero pulls it to zero on an unloaded scale, hiding
+   real drift). */
+static void App_WarmupCheck(void)
+{
+  uint32_t now = HAL_GetTick();
+  int32_t d;
+  if ((int32_t)(now - s_warmupEnd) >= 0) { return; }   /* warm-up already over */
+  d = Scale_GetRawFiltered() - s_warmupBaseRaw;
+  if (d < 0) { d = -d; }
+  if (d > WARMUP_STABLE_LSB)
+  {
+    s_warmupBaseRaw = Scale_GetRawFiltered();
+    s_warmupStableT0 = now;
+  }
+  else if ((uint32_t)(now - s_warmupStableT0) >= WARMUP_STABLE_MS)
+  {
+    s_warmupEnd = now;   /* stable long enough: warm-up ends now */
+  }
+}
 
 static void App_Key(void)
 {
@@ -174,7 +259,7 @@ static void App_Key(void)
     s_k1Pressed = k1 ? 1u : 0u;
     s_k1Toggled = k1 ? 1u : 0u;
     s_k1Start = HAL_GetTick();
-    s_lastAct = HAL_GetTick();   /* the wake-up press counts as activity */
+    App_MarkActivity();          /* the wake-up press counts as activity */
     s_wakeSync = 0u;
   }
 
@@ -182,7 +267,7 @@ static void App_Key(void)
   if (k2 && !s_lastK2)
   {
     Scale_Tare();
-    s_lastAct = HAL_GetTick();
+    App_MarkActivity();
   }
   s_lastK2 = k2;
 
@@ -194,7 +279,7 @@ static void App_Key(void)
     {
       s_k1Pressed = 1u;
       s_k1Start = HAL_GetTick();
-      s_lastAct = HAL_GetTick();
+      App_MarkActivity();
     }
     else if (((uint32_t)(HAL_GetTick() - s_k1Start) >= 2000u) && !s_k1Toggled)
     {
@@ -222,6 +307,23 @@ static void App_Display(void)
   uint8_t x, i;
 
   OLED_Clear();
+
+  /* warm-up countdown: readings are still settling after power-on.
+     (int32_t) subtraction: wrap-safe like the other tick comparisons */
+  if ((int32_t)(HAL_GetTick() - s_warmupEnd) < 0)
+  {
+    char sb[8];
+    uint8_t sn = 0;
+    uint32_t remain = (s_warmupEnd - HAL_GetTick() + 999u) / 1000u;  /* ceil, s */
+
+    OLED_ShowString(8, 10, (const uint8_t *)"Warm up", 16, 1);
+    sn += App_itoa(sb + sn, remain);
+    sb[sn++] = 's';
+    sb[sn] = 0;
+    OLED_ShowString(40, 30, (const uint8_t *)sb, 16, 1);
+    OLED_Refresh();
+    return;
+  }
 
   if (s_mode == 1u)
   {
@@ -377,7 +479,7 @@ static void App_Wakeup(void)
   Scale_Wakeup();         /* re-init ADC, quick warm-up, keeps tare zero */
   s_tempState = 0u;       /* restart the temperature cycle */
 
-  s_lastAct  = HAL_GetTick();
+  App_MarkActivity();     /* restart the stability window (keeps tare) */
   s_lastUart = 0u;        /* force an immediate UART report */
   s_lastDisp = 0u;
   s_wakeSync = 1u;        /* the wake-up key must not trigger actions */
@@ -401,6 +503,12 @@ void App_Init(void)
   OLED_Init();
   Scale_Init();
 
+  /* JDY-31 bluetooth: disconnect + soft-reset the module so it starts
+     from a clean transparent-mode state (the jdy_slave driver used to be
+     compiled but never called; a module left paired/busy from a previous
+     session would otherwise never forward data). ~450ms extra at boot. */
+  bluetooth_slave_init();
+
   /* KEY1/KEY2 EXTI wake-up from STOP mode. The pins are already
      configured as GPIO_MODE_IT_RISING by gpio.c; the ISRs live in
      stm32f1xx_it.c (USER CODE section). Without NVIC enabled the EXTI
@@ -417,7 +525,11 @@ void App_Init(void)
   OLED_Refresh();
   Delay_ms(600);
 
-  s_lastAct = HAL_GetTick();   /* start the auto-sleep timeout from now */
+  /* start the stability window and the warm-up detection from now */
+  App_MarkActivity();
+  s_warmupBaseRaw  = Scale_GetRawFiltered();
+  s_warmupStableT0 = HAL_GetTick();
+  s_warmupEnd      = HAL_GetTick() + WARMUP_MAX_MS;   /* safety-net timeout */
 }
 
 void App_Loop(void)
@@ -425,13 +537,32 @@ void App_Loop(void)
   uint32_t now;
 
   Scale_Update();
+  App_StabilityCheck();
+  App_WarmupCheck();
   App_TempTask();
   App_Key();
+
+  /* Device/self-test mode (KEY1 long-press >2s toggles s_mode):
+     run the full peripheral self-test once - ADS1220 raw, DS18B20 temp,
+     10s UART echo test (bluetooth: host sees periodic 'A', OLED N: counts
+     host bytes echoed back = two-way link check), key test.
+     SelfTest_Run blocks ~25s; it restores UART baud to 9600 and resets
+     the ADS1220, so Scale_Wakeup() re-inits the ADC (keeps tare) after. */
+  if (s_mode == 1u)
+  {
+    SelfTest_Run();
+    Scale_Wakeup();
+    s_mode = 0u;
+    App_MarkActivity();    /* keys used during self-test count as activity */
+  }
 
   now = HAL_GetTick();
   if ((uint32_t)(now - s_lastUart) >= 50u)   /* ~20Hz report */
   {
-    App_UartSend();
+    if ((int32_t)(now - s_warmupEnd) >= 0)   /* suppressed during warm-up */
+    {
+      App_UartSend();
+    }
     s_lastUart = now;
   }
   if ((uint32_t)(now - s_lastDisp) >= 200u)  /* ~5Hz display refresh */
@@ -440,10 +571,12 @@ void App_Loop(void)
     s_lastDisp = now;
   }
 
-  /* auto sleep: no key activity for AUTO_SLEEP_MS. Skipped while a
-     debugger is attached - a core in STOP mode cannot be halted by the
-     SWD probe ("Could not stop Cortex-M device" in Keil). */
-  if (!App_DebuggerAttached() && ((uint32_t)(now - s_lastAct) >= AUTO_SLEEP_MS))
+  /* auto sleep: only after the reading has stayed stable (drift within
+     STABLE_SLEEP_THRESHOLD_G) for STABLE_SLEEP_MS. Any key press or
+     reading change restarts the window. Skipped while a debugger is
+     attached - a core in STOP mode cannot be halted by the SWD probe
+     ("Could not stop Cortex-M device" in Keil). */
+  if (!App_DebuggerAttached() && ((uint32_t)(now - s_lastStable) >= STABLE_SLEEP_MS))
   {
     App_Sleep();            /* blocks until wake-up */
     now = HAL_GetTick();    /* tick jumped; re-sync local copy */

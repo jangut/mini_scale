@@ -32,6 +32,8 @@ void bluetooth_slave_init()
   delay_function(STARTING_DELAY);       /*needed for settling the serial peripheral*/
   string_eraser(temporary_string, MAX_LENGTH_OF_STRING);        /*filling our temporary string with null*/
   bluetooth_command(CMD_DISCONNECT);        /*DISCONECT allows us to send our commands to JDY_31, even if it is in data mode*/
+  bluetooth_command(CMD_DEFAULT_SETTING);   /*restore factory defaults: baud 9600, name JDY-31-SPP, clear any bindings
+                                              (fixes a module whose config was changed by earlier debugging)*/
   bluetooth_command(CMD_RESET);       /*after turning to commmand mode, RESET will unpair our bluetooth module from any paired master*/
   for (uint8_t index = 0; index < NUMBER_OF_TASKS; index++)       /*filling our tasks array with predefined and incremental command keys*/
   {
@@ -78,6 +80,7 @@ void bluetooth_command (uint8_t command)
       break;
     case CMD_DEFAULT_SETTING:
       bluetooth_send_string (ATCommandDefault, ATCOMMAND_LENGTH_DEFAULT_SETTING);
+      delay_function(DISCONNECT_DELAY_MS);       /*let the module apply factory defaults before the reset*/
       break;
     default:
       break;

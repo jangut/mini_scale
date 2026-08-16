@@ -268,7 +268,7 @@ void OLED_DrawCircle(uint8_t x,uint8_t y,uint8_t r)
 //在指定位置显示一个字符,包括部分字符
 //x:0~127
 //y:0~63
-//size1:选择字体 6x8/6x12/8x16/12x24
+//size1:选择字体 6x8/8x16/12x24 (6x12/asc2_1206 removed to fit 32KB eval limit)
 //mode:0,反色显示;1,正常显示
 void OLED_ShowChar(uint8_t x,uint8_t y,uint8_t chr,uint8_t size1,uint8_t mode)
 {
@@ -281,8 +281,6 @@ void OLED_ShowChar(uint8_t x,uint8_t y,uint8_t chr,uint8_t size1,uint8_t mode)
 	{
 		if(size1==8)
 			  {temp=asc2_0806[chr1][i];} //调用0806字体
-		else if(size1==12)
-        {temp=asc2_1206[chr1][i];} //调用1206字体
 		else if(size1==16)
         {temp=asc2_1608[chr1][i];} //调用1608字体
 		else if(size1==24)
@@ -366,17 +364,15 @@ void OLED_ShowChinese(uint8_t x,uint8_t y,uint8_t num,uint8_t size1,uint8_t mode
 	uint8_t m,temp;
 	uint8_t x0=x,y0=y;
 	uint16_t i,size3=(size1/8+((size1%8)?1:0))*size1;  //得到字体一个字符对应点阵集所占的字节数
+
+	/* only 16x16 glyphs are used by the app; 24/32/64 branches removed
+	   so the Hzk2/Hzk3/Hzk4 tables (unused) get garbage-collected by the
+	   linker and flash stays under the 32KB evaluation limit */
+	if(size1 != 16) { return; }
+
 	for(i=0;i<size3;i++)
 	{
-		if(size1==16)
-				{temp=Hzk1[num][i];}//调用16*16字体
-		else if(size1==24)
-				{temp=Hzk2[num][i];}//调用24*24字体
-		else if(size1==32)       
-				{temp=Hzk3[num][i];}//调用32*32字体
-		else if(size1==64)
-				{temp=Hzk4[num][i];}//调用64*64字体
-		else return;
+		temp=Hzk1[num][i];//调用16*16字体
 		for(m=0;m<8;m++)
 		{
 			if(temp&0x01)OLED_DrawPoint(x,y,mode);

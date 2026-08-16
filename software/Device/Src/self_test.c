@@ -222,6 +222,9 @@ static uint8_t Test_UART(void)
     Delay_ms(10);
     t += 10u;
   }
+  /* restore default baud so the main loop keeps reporting at 9600 */
+  huart1.Init.BaudRate = 9600u;
+  HAL_UART_Init(&huart1);
   return (count > 0u) ? 1u : 0u;
 }
 

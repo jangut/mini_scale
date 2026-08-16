@@ -2,7 +2,6 @@
 "software\startup_stm32f103xb.o"
 "software\main.o"
 "software\gpio.o"
-"software\adc.o"
 "software\tim.o"
 "software\usart.o"
 "software\stm32f1xx_it.o"
@@ -34,7 +33,7 @@
 "software\self_test.o"
 "software\scale.o"
 "software\app.o"
---strict --scatter "software\software.sct"
+--library_type=microlib --strict --scatter "software\software.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
 --info sizes --info totals --info unused --info veneers
 --list "software.map" -o software\software.axf

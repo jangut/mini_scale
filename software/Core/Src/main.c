@@ -89,10 +89,14 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_ADC1_Init();
   MX_USART1_UART_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  /* PB4 is JTAG NJTRST by default on STM32F103. Disable JTAG (SWD stays
+     enabled) so KEY1 on PB4 works as a normal GPIO / EXTI wake-up source.
+     Must happen before App_Init() uses the keys. */
+  __HAL_RCC_AFIO_CLK_ENABLE();
+  __HAL_AFIO_REMAP_SWJ_NOJTAG();
   App_Init();
   /* USER CODE END 2 */
 
