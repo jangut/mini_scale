@@ -284,4 +284,19 @@ platform/SerialUI-main/
 platform/GUI/dist/
 platform/GUI/build/
 platform/GUI/*.spec
-platform/GUI/logo.ico
+
+############################
+# 20. 本仓库不再跟踪的文件（曾误提交，已移除跟踪）
+############################
+
+# CubeMX 固件包自带的 DSP 测试套件（与项目无关）
+software/Drivers/CMSIS/DSP/DSP_Lib_TestSuite/
+
+# 外部参考项目（未使用）
+software/ADS1220-master/
+
+# Keil 自动生成的链接器中间文件
+software/MDK-ARM/software/*.lnp
+
+# 标定采集的临时数据
+software/tools/drift_raw.csv
